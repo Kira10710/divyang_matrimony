@@ -1,0 +1,112 @@
+# ==============================
+# Temporary scaffold scripts
+# ==============================
+scaffold_flutter.ps1
+scaffold_features.ps1
+scaffold_backend.ps1
+
+# ==============================
+# Secrets and environment files
+# ==============================
+.env
+.env.*
+!.env.example
+!.env.*.example
+secrets/
+credentials.json
+*service-account*.json
+*firebase-adminsdk*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ==============================
+# Python / FastAPI
+# ==============================
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+wheels/
+
+# ==============================
+# Flutter / Dart
+# ==============================
+.dart_tool/
+.packages
+.pub-cache/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+coverage/
+
+# ==============================
+# Android generated files
+# ==============================
+**/android/.gradle/
+**/android/local.properties
+**/android/key.properties
+*.jks
+*.keystore
+
+# ==============================
+# iOS generated files
+# ==============================
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/ephemeral/
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# ==============================
+# Databases and local data
+# ==============================
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+
+# ==============================
+# Logs and temporary files
+# ==============================
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# ==============================
+# IDE
+# ==============================
+.idea/
+.vscode/
+
+# ==============================
+# Operating system
+# ==============================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ==============================
+# Build and deployment
+# ==============================
+*.ipa
+*.apk
+*.aab
+*.class
+
+# ==============================
+# Keep environment templates
+# ==============================
+!.env.example
+!.env.*.example

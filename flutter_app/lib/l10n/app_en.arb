@@ -1,0 +1,7 @@
+{
+  "@@locale": "en",
+  "appTitle": "Divyang Matrimony",
+  "@appTitle": {
+    "description": "The title of the application"
+  }
+}

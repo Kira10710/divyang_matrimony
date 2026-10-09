@@ -1,0 +1,77 @@
+# ======================================================================
+# Divyang Matrimony — Docker Compose (Development)
+# ======================================================================
+# API + PostgreSQL + Redis — no Celery worker container in v1.
+# See Architecture Section 1.2 and Section 3.7.
+# ======================================================================
+
+services:
+  # --- FastAPI Application ---
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override .env localhost URLs with Docker network hostnames
+      DATABASE_URL: postgresql+asyncpg://divyang:devpassword@db:5432/divyang_matrimony
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app  # Hot reload in dev — remove in production compose
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+    networks:
+      - matrimony-net
+
+  # --- PostgreSQL ---
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: divyang
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: divyang_matrimony
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U divyang -d divyang_matrimony"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - matrimony-net
+
+  # --- Redis (cache + rate-limit only, v1) ---
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - matrimony-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  matrimony-net:
+    driver: bridge

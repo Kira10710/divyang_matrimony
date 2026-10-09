@@ -1,0 +1,48 @@
+# Flutter / Dart
+*.dart.js
+*.js_
+*.js.deps
+*.js.map
+.dart_tool/
+.packages
+build/
+.pub-cache/
+.pub/
+pubspec.lock
+
+# Android
+**/android/**/gradle-wrapper.jar
+**/android/.gradle
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/key.properties
+*.jks
+
+# Web
+**/web/favicon.png
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# Generated
+*.g.dart
+*.freezed.dart
+*.gr.dart
+
+# Firebase config — per-environment, not committed
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase_options.dart
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log

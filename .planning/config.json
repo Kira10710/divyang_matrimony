@@ -1,0 +1,11 @@
+{
+  "workflow": {
+    "auto_commit": true,
+    "require_tests": true,
+    "verify_architecture": true
+  },
+  "project": {
+    "name": "Divyang Matrimony",
+    "platform_id": "divyang"
+  }
+}
