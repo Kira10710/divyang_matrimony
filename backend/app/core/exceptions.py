@@ -58,8 +58,14 @@ class BadRequestError(AppException):
 
 class PaymentError(AppException):
     """Payment processing failure (maps to HTTP 402)."""
-
     def __init__(self, message: str = "Payment error", code: str = "PAYMENT_ERROR"):
+        super().__init__(message, code)
+
+
+class ServiceUnavailableError(AppException):
+    """External service is unavailable or misconfigured (maps to HTTP 503)."""
+
+    def __init__(self, message: str = "Service unavailable", code: str = "SERVICE_UNAVAILABLE"):
         super().__init__(message, code)
 
 

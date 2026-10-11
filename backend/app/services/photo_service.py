@@ -30,6 +30,7 @@ from app.core.exceptions import (
     BadRequestError,
     ForbiddenError,
     NotFoundError,
+    ServiceUnavailableError,
 )
 from app.models.enums import ModerationStatusEnum, VisibilityTier
 from app.models.profile_photo import ProfilePhoto
@@ -103,13 +104,15 @@ class PhotoService:
         }
 
         ttl = timedelta(minutes=15)
+        max_bytes = settings.PHOTO_MAX_SIZE_MB * 1024 * 1024
+        headers = {"x-goog-content-length-range": f"0,{max_bytes}"}
         
-        original_url = self._signed_url(paths["original"], ttl, method="PUT")
-        medium_url = self._signed_url(paths["medium"], ttl, method="PUT")
-        thumbnail_url = self._signed_url(paths["thumbnail"], ttl, method="PUT")
+        original_url = self._signed_url(paths["original"], ttl, method="PUT", headers=headers)
+        medium_url = self._signed_url(paths["medium"], ttl, method="PUT", headers=headers)
+        thumbnail_url = self._signed_url(paths["thumbnail"], ttl, method="PUT", headers=headers)
         
         if not original_url or not medium_url or not thumbnail_url:
-            raise RuntimeError("Failed to generate upload URLs.")
+            raise ServiceUnavailableError("Failed to generate upload URLs due to a storage configuration error.")
 
         return UploadSessionOut(
             urls=UploadSessionOut.UploadUrls(
@@ -121,7 +124,8 @@ class PhotoService:
                 storage_path=paths["original"],
                 medium_path=paths["medium"],
                 thumbnail_path=paths["thumbnail"],
-            )
+            ),
+            max_bytes=max_bytes,
         )
 
     async def register_photo(
@@ -156,12 +160,26 @@ class PhotoService:
         # or registering paths before they've finished uploading.
         try:
             bucket = self._bucket_factory()
+            max_bytes = settings.PHOTO_MAX_SIZE_MB * 1024 * 1024
+            
             for p in (data.storage_path, data.medium_path, data.thumbnail_path):
                 if not p.startswith(f"profiles/{profile_id}/"):
                     raise BadRequestError(f"Invalid storage path: {p}")
                 blob = bucket.blob(p)
                 if not blob.exists():
                     raise BadRequestError(f"File not found in storage: {p}")
+                
+                # Fetch metadata to verify size as defense in depth
+                blob.reload()
+                if blob.size is None:
+                    raise BadRequestError(f"Could not verify size for {p}")
+                if blob.size > max_bytes:
+                    # Attempt cleanup of the oversized blob
+                    try:
+                        blob.delete()
+                    except Exception as exc:
+                        logger.warning("photo.oversized_cleanup_failed", object_path=p, error=str(exc))
+                    raise BadRequestError(f"File {p} exceeds maximum allowed size.")
         except BadRequestError:
             raise
         except Exception as e:
@@ -399,7 +417,7 @@ class PhotoService:
             signed_urls=signed,
         )
 
-    def _signed_url(self, object_path: str, ttl: timedelta, method: str = "GET") -> str:
+    def _signed_url(self, object_path: str, ttl: timedelta, method: str = "GET", headers: dict[str, str] | None = None) -> str:
         """Generate a short-lived signed URL for a Firebase Storage object."""
         try:
             bucket = self._bucket_factory()
@@ -412,6 +430,9 @@ class PhotoService:
                 "credentials": credentials,
                 "version": "v4",
             }
+            if headers:
+                kwargs["headers"] = headers
+
             if method == "PUT":
                 kwargs["content_type"] = "image/jpeg"
                 

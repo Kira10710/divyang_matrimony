@@ -18,14 +18,40 @@ class AppTheme {
   static const double _minButtonHeight = _minTouchTarget + 4;
 
   static ThemeData light() {
-    return _build(
-      ColorScheme.fromSeed(
-        seedColor: AppColors.primary,
-        brightness: Brightness.light,
-        primary: AppColors.primary,
-        secondary: AppColors.secondary,
-        onSecondary: AppColors.onSecondary,
-        error: AppColors.error,
+    final ColorScheme scheme = ColorScheme.fromSeed(
+      seedColor: AppColors.primary,
+      brightness: Brightness.light,
+      primary: AppColors.primary,
+      secondary: AppColors.secondary,
+      onSecondary: AppColors.onSecondary,
+      error: AppColors.error,
+    );
+    final ThemeData base = _build(scheme);
+    // Brand surfaces from the landing page: burgundy bars, blush canvas,
+    // ivory cards with a soft border.
+    return base.copyWith(
+      scaffoldBackgroundColor: AppColors.blush,
+      appBarTheme: base.appBarTheme.copyWith(
+        backgroundColor: AppColors.primary,
+        foregroundColor: AppColors.onPrimary,
+        titleTextStyle: AppTypography.textTheme.titleLarge?.copyWith(
+          color: AppColors.onPrimary,
+          fontWeight: FontWeight.w600,
+        ),
+        iconTheme: const IconThemeData(color: AppColors.onPrimary),
+        actionsIconTheme: const IconThemeData(color: AppColors.onPrimary),
+      ),
+      cardTheme: base.cardTheme.copyWith(
+        color: const Color(0xFFFFFBF9),
+        elevation: AppElevation.none,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.card + 4),
+          side: BorderSide(color: scheme.primary.withValues(alpha: 0.14)),
+        ),
+      ),
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: const Color(0xFFFBE9EE),
+        side: BorderSide(color: scheme.primary.withValues(alpha: 0.2)),
       ),
     );
   }

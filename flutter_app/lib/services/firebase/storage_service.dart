@@ -17,21 +17,25 @@ class StorageService {
     required List<int> mediumBytes,
     required String thumbnailUrl,
     required List<int> thumbnailBytes,
+    required int maxBytes,
   }) async {
     await Future.wait(<Future<void>>[
-      _uploadBytes(originalUrl, originalBytes),
-      _uploadBytes(mediumUrl, mediumBytes),
-      _uploadBytes(thumbnailUrl, thumbnailBytes),
+      _uploadBytes(originalUrl, originalBytes, maxBytes),
+      _uploadBytes(mediumUrl, mediumBytes, maxBytes),
+      _uploadBytes(thumbnailUrl, thumbnailBytes, maxBytes),
     ]);
   }
 
-  Future<void> _uploadBytes(String url, List<int> bytes) async {
+  Future<void> _uploadBytes(String url, List<int> bytes, int maxBytes) async {
     try {
       await _dio.put<dynamic>(
         url,
         data: Uint8List.fromList(bytes),
         options: Options(
-          headers: const <String, String>{'Content-Type': 'image/jpeg'},
+          headers: <String, String>{
+            'Content-Type': 'image/jpeg',
+            'x-goog-content-length-range': '0,$maxBytes',
+          },
         ),
       );
     } on DioException {

@@ -8,10 +8,12 @@ Failure mapExceptionToFailure(Object error) {
   if (error is NetworkException) return NetworkFailure(error.message);
   if (error is OtpException) return OtpFailure(error.message);
   if (error is OtpRateLimitException) return OtpRateLimitFailure(error.message);
-  if (error is AccountLockedException)
+  if (error is AccountLockedException) {
     return AccountLockedFailure(error.message);
-  if (error is AccountBannedException)
+  }
+  if (error is AccountBannedException) {
     return AccountBannedFailure(error.message);
+  }
   if (error is TokenExpiredException || error is InvalidTokenException) {
     return const AuthFailure('Your session has expired. Please log in again.');
   }

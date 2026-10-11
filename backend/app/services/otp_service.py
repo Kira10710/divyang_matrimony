@@ -229,6 +229,10 @@ class ConsoleOtpService(IOtpService):
     # In-memory store: {f"{platform_id}:{phone}": {"code": str, "attempts": int}}
     _store: dict[str, dict] = {}
 
+    def __init__(self) -> None:
+        if settings.ENVIRONMENT != "development":
+            raise RuntimeError("CRITICAL SECURITY ERROR: ConsoleOtpService cannot be used outside of development.")
+
     async def send_otp(self, phone: str, platform_id: str) -> None:
         key = f"{platform_id}:{phone}"
         code = "000000"

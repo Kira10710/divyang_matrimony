@@ -18,6 +18,15 @@ import '../features/profile/presentation/screens/manage_photos_screen.dart';
 import '../features/profile/presentation/screens/edit_partner_preferences_screen.dart';
 import '../features/profile/presentation/screens/edit_basic_details_screen.dart';
 import '../features/profile/presentation/screens/edit_disability_details_screen.dart';
+import '../demo/demo_mode.dart';
+import '../features/interests/presentation/screens/interests_screen.dart';
+import '../features/payments/presentation/screens/subscription_plans_screen.dart';
+import '../features/search/presentation/screens/search_results_screen.dart';
+import '../features/search/presentation/screens/search_screen.dart';
+import '../features/settings/presentation/screens/accessibility_settings_screen.dart';
+import '../features/settings/presentation/screens/delete_account_screen.dart';
+import '../features/settings/presentation/screens/privacy_settings_screen.dart';
+import '../features/settings/presentation/screens/settings_screen.dart';
 import 'guards/auth_guard.dart';
 import 'route_names.dart';
 
@@ -93,6 +102,49 @@ final Provider<GoRouter> routerProvider = Provider<GoRouter>((Ref ref) {
         path: '/profile/edit-partner-preferences',
         builder: (_, __) => const EditPartnerPreferencesScreen(),
       ),
+      // Sample-data screens, registered only in the showcase build.
+      if (kDemoMode) ...<RouteBase>[
+        GoRoute(
+          path: RouteNames.search,
+          builder: (_, __) => const SearchScreen(),
+        ),
+        GoRoute(
+          path: RouteNames.searchResults,
+          builder: (_, __) => const SearchResultsScreen(),
+        ),
+        GoRoute(
+          path: RouteNames.interestsReceived,
+          builder: (_, __) => const InterestsScreen(initialTab: 0),
+        ),
+        GoRoute(
+          path: RouteNames.interestsSent,
+          builder: (_, __) => const InterestsScreen(initialTab: 1),
+        ),
+        GoRoute(
+          path: RouteNames.interestsMutual,
+          builder: (_, __) => const InterestsScreen(initialTab: 2),
+        ),
+        GoRoute(
+          path: RouteNames.subscriptionPlans,
+          builder: (_, __) => const SubscriptionPlansScreen(),
+        ),
+        GoRoute(
+          path: RouteNames.settings,
+          builder: (_, __) => const SettingsScreen(),
+        ),
+        GoRoute(
+          path: RouteNames.privacySettings,
+          builder: (_, __) => const PrivacySettingsScreen(),
+        ),
+        GoRoute(
+          path: RouteNames.accessibilitySettings,
+          builder: (_, __) => const AccessibilitySettingsScreen(),
+        ),
+        GoRoute(
+          path: RouteNames.deleteAccount,
+          builder: (_, __) => const DeleteAccountScreen(),
+        ),
+      ],
       GoRoute(
         path: '/profile/:id', // matches RouteNames.viewProfile
         builder: (_, GoRouterState state) =>

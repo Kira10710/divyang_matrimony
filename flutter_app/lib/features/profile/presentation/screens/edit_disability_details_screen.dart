@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../models/enums/disability_type.dart';
 import '../../../../models/profile_model.dart';
 import '../../../../theme/design_tokens.dart';
 import '../providers/my_profile_provider.dart';

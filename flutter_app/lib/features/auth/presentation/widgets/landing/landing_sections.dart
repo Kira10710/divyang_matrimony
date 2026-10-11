@@ -103,9 +103,9 @@ class TrustStrip extends StatelessWidget {
 
   static const List<(IconData, String)> _items = <(IconData, String)>[
     (Icons.currency_rupee_rounded, 'Free to register'),
-    (Icons.lock_rounded, 'Disability details encrypted'),
+    (Icons.lock_rounded, 'Your details, your choice'),
     (Icons.translate_rounded, 'English · हिन्दी · मराठी'),
-    (Icons.chat_rounded, 'Chat on WhatsApp after a mutual match'),
+    (Icons.chat_rounded, 'WhatsApp chat after a mutual match (preview)'),
   ];
 
   @override
@@ -340,8 +340,8 @@ class PrivacyLadderSection extends StatelessWidget {
               title:
                   'Your disability is part of your story. You decide who reads it.',
               subtitle:
-                  'We ask about your disability so the right people find you — '
-                  'but details are revealed step by step, never all at once.',
+                  'The plan is to reveal details step by step, never all at once. '
+                  'This preview shows the intended design; privacy controls are not enforced yet.',
             ),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 760),
@@ -422,7 +422,7 @@ class FeaturesSection extends StatelessWidget {
     (
       Icons.accessibility_new_rounded,
       'Accessible by design',
-      'Works with TalkBack and screen readers, large text and a high-contrast mode. Big, easy-to-tap buttons throughout.',
+      'Screen-reader labels, adjustable text size, a high-contrast mode and big, easy-to-tap buttons throughout.',
     ),
     (
       Icons.family_restroom_rounded,
@@ -431,8 +431,8 @@ class FeaturesSection extends StatelessWidget {
     ),
     (
       Icons.verified_user_rounded,
-      'Verified, moderated profiles',
-      'Our team reviews profiles and UDID documents, and every profile can be reported in one tap.',
+      'Safety tools (coming soon)',
+      'Profile review, document verification and one-tap reporting are planned. None of them are live in this preview.',
     ),
     (
       Icons.tune_rounded,

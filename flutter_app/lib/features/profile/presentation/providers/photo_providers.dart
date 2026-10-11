@@ -40,7 +40,9 @@ class MyPhotosNotifier extends AsyncNotifier<List<PhotoModel>> {
           .read(photoRepositoryProvider)
           .createUploadSession();
       final Map<String, dynamic> urls = session['urls'] as Map<String, dynamic>;
-      final Map<String, dynamic> paths = session['paths'] as Map<String, dynamic>;
+      final Map<String, dynamic> paths =
+          session['paths'] as Map<String, dynamic>;
+      final int maxBytes = session['max_bytes'] as int;
 
       // 2. Upload bytes to signed URLs (unauthenticated Dio)
       final storageService = ref.read(storageServiceProvider);
@@ -51,6 +53,7 @@ class MyPhotosNotifier extends AsyncNotifier<List<PhotoModel>> {
         mediumBytes: variants.mediumBytes,
         thumbnailUrl: urls['thumbnail_url'] as String,
         thumbnailBytes: variants.thumbnailBytes,
+        maxBytes: maxBytes,
       );
 
       // 3. Register paths with the backend

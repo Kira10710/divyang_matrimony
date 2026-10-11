@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:go_router/go_router.dart';
+
+import '../../../../demo/demo_banner.dart';
+import '../../../../demo/demo_mode.dart';
+import '../../../../models/enums/gender.dart';
+import '../../../../routing/route_names.dart';
 import '../../../../theme/app_theme.dart';
+import '../../../search/presentation/providers/search_providers.dart';
 import '../../../profile/presentation/providers/registration_draft_provider.dart';
 import '../widgets/landing/landing_hero.dart';
 import '../widgets/landing/landing_sections.dart';
@@ -60,6 +67,21 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
     _nameFocus.requestFocus();
   }
 
+  /// Demo only: "Let's begin" applies the chosen preferences and opens the
+  /// sample search results.
+  void _demoBegin() {
+    final RegistrationDraft d = ref.read(registrationDraftProvider);
+    ref.read(searchFiltersProvider.notifier).state = SearchFilters(
+      gender: d.lookingFor ?? Gender.female,
+      age: RangeValues(d.ageMin.toDouble(), d.ageMax.toDouble()),
+      disability: d.partnerDisability,
+      motherTongue: d.motherTongue,
+    );
+    demoSignIn(ref);
+    context.go(RouteNames.home);
+    context.push(RouteNames.searchResults);
+  }
+
   void _pickLanguage(String language) {
     ref
         .read(registrationDraftProvider.notifier)
@@ -78,6 +100,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
         body: SafeArea(
           child: Column(
             children: <Widget>[
+              if (kDemoMode) const DemoBanner(),
               const LandingTopBar(),
               Expanded(
                 child: SingleChildScrollView(
@@ -88,7 +111,9 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
                           key: _cardKey,
                           nameFocusNode: _nameFocus,
                         ),
-                        quickSearch: QuickSearchBar(onBegin: _goToRegistration),
+                        quickSearch: QuickSearchBar(
+                          onBegin: kDemoMode ? _demoBegin : _goToRegistration,
+                        ),
                       ),
                       const TrustStrip(),
                       const HowItWorksSection(),

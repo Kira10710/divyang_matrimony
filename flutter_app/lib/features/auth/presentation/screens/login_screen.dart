@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/utils/validators.dart';
+import '../../../../demo/demo_mode.dart';
 import '../../../../routing/route_names.dart';
 import '../../../../shared/extensions/context_extensions.dart';
 import '../../../../shared/widgets/accessible_button.dart';
@@ -37,6 +38,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     FocusScope.of(context).unfocus();
+    if (kDemoMode) {
+      demoSignIn(ref);
+      return;
+    }
     ref
         .read(loginProvider.notifier)
         .sendOtp(Validators.phoneToE164(_phoneController.text));
@@ -76,7 +81,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             Text('Login or sign up', style: textTheme.headlineSmall),
             const SizedBox(height: Spacing.sm),
             Text(
-              "We'll text you a one-time code to verify your number — no password needed.",
+              kDemoMode
+                  ? 'Demo preview: enter any valid number to continue. No code is sent.'
+                  : "We'll text you a one-time code to verify your number — no password needed.",
               style: textTheme.bodyMedium,
             ),
             const SizedBox(height: Spacing.lg),
@@ -102,7 +109,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
             const SizedBox(height: Spacing.lg),
             AccessibleButton(
-              label: 'Send OTP',
+              label: kDemoMode ? 'Continue (demo)' : 'Send OTP',
               isLoading: isSubmitting,
               onPressed: isSubmitting ? null : _submit,
             ),

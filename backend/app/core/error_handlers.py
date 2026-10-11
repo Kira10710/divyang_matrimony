@@ -21,6 +21,7 @@ from app.core.exceptions import (
     PaymentError,
     RateLimitError,
     UnauthorizedError,
+    ServiceUnavailableError,
 )
 from app.core.response import error_response
 
@@ -41,6 +42,7 @@ _STATUS_MAP: dict[type[AppException], int] = {
     PaymentError: 402,
     RateLimitError: 429,
     UnauthorizedError: 401,
+    ServiceUnavailableError: 503,
 }
 
 

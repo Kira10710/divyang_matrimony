@@ -52,8 +52,9 @@ class Validators {
   static String? password(String? value, {int minLength = 8}) {
     final String v = value ?? '';
     if (v.isEmpty) return 'Enter your password';
-    if (v.length < minLength)
+    if (v.length < minLength) {
       return 'Password must be at least $minLength characters';
+    }
     return null;
   }
 

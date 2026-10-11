@@ -221,7 +221,7 @@ class _HeroPitch extends StatelessWidget {
           children: <Widget>[
             _HeroChip(
               icon: Icons.verified_rounded,
-              label: 'Every profile reviewed',
+              label: 'Made for the disability community',
             ),
             _HeroChip(
               icon: Icons.accessibility_new_rounded,
@@ -263,7 +263,7 @@ class _ConfidentialBadge extends StatelessWidget {
           const SizedBox(width: Spacing.sm),
           Flexible(
             child: Text(
-              'Private & respectful — you control who sees your details',
+              'Private & respectful — you choose what to share',
               style: Theme.of(context).textTheme.labelLarge?.copyWith(
                 color: const Color(0xFF3D2300),
                 fontWeight: FontWeight.w700,

@@ -103,17 +103,20 @@ class _ProfileWizardScreenState extends ConsumerState<ProfileWizardScreen> {
       if (names.length > 1) _lastName.text = names.sublist(1).join(' ');
     }
     _lookingFor = draft.lookingFor;
-    if (_lookingFor != null)
+    if (_lookingFor != null) {
       _gender = _lookingFor == Gender.female ? Gender.male : Gender.female;
+    }
     _partnerAge = RangeValues(draft.ageMin.toDouble(), draft.ageMax.toDouble());
     _partnerMotherTongue = draft.motherTongue;
     _motherTongue = draft.motherTongue;
-    if (draft.partnerDisability != null)
+    if (draft.partnerDisability != null) {
       _partnerDisabilities = <DisabilityType>{draft.partnerDisability!};
+    }
 
     final String? phone = ref.read(currentUserProvider)?.phone;
-    if (phone != null && _managedBy.isSelf)
+    if (phone != null && _managedBy.isSelf) {
       _whatsapp.text = phone.replaceFirst('+91', '');
+    }
   }
 
   @override
@@ -417,8 +420,9 @@ class _ProfileWizardScreenState extends ConsumerState<ProfileWizardScreen> {
           validator: (String? v) =>
               Validators.required(v, message: 'Enter the last name'),
         );
-        if (c.maxWidth < 480)
+        if (c.maxWidth < 480) {
           return Column(children: <Widget>[first, _gap, lastName]);
+        }
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[

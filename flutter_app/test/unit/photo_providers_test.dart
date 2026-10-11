@@ -70,6 +70,7 @@ void main() {
         'medium_path': 'profiles/123/medium.jpg',
         'thumbnail_path': 'profiles/123/thumbnail.jpg',
       },
+      'max_bytes': 10485760,
     };
 
     final mockPhoto = PhotoModel(

@@ -140,7 +140,7 @@ class _ProfileDetails extends StatelessWidget {
               const SizedBox(height: Spacing.lg),
 
               if (profile.disabilityType != null) ...[
-                _SectionHeader(title: 'Disability Details'),
+                const _SectionHeader(title: 'Disability Details'),
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(Spacing.md),
@@ -178,7 +178,7 @@ class _ProfileDetails extends StatelessWidget {
               ],
 
               if (profile.sensitiveData != null) ...[
-                _SectionHeader(title: 'Health & Support'),
+                const _SectionHeader(title: 'Health & Support'),
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(Spacing.md),
@@ -189,12 +189,10 @@ class _ProfileDetails extends StatelessWidget {
                             label: 'Since',
                             value: profile.sensitiveData!.disabilitySince!,
                           ),
-                        if (profile.sensitiveData?.mobilityAidRequired != null)
+                        if (profile.sensitiveData?.mobilityAid != null)
                           _InfoRow(
                             label: 'Mobility Aid',
-                            value: profile.sensitiveData!.mobilityAidRequired!
-                                ? 'Required'
-                                : 'Not required',
+                            value: profile.sensitiveData!.mobilityAid!,
                           ),
                         if (profile.sensitiveData?.healthConditions != null)
                           _InfoRow(
@@ -209,7 +207,7 @@ class _ProfileDetails extends StatelessWidget {
               ],
 
               if (profile.partnerPreferences != null) ...[
-                _SectionHeader(title: 'Looking For'),
+                const _SectionHeader(title: 'Looking For'),
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(Spacing.md),
@@ -230,17 +228,17 @@ class _ProfileDetails extends StatelessWidget {
                           ),
                         if (profile
                                     .partnerPreferences!
-                                    .preferredMaritalStatus !=
+                                    .preferredMaritalStatuses !=
                                 null &&
                             profile
                                 .partnerPreferences!
-                                .preferredMaritalStatus!
+                                .preferredMaritalStatuses!
                                 .isNotEmpty)
                           _InfoRow(
                             label: 'Marital Status',
                             value: profile
                                 .partnerPreferences!
-                                .preferredMaritalStatus!
+                                .preferredMaritalStatuses!
                                 .map((m) => m.displayName)
                                 .join(', '),
                           ),
@@ -261,7 +259,7 @@ class _ProfileDetails extends StatelessWidget {
                                 .join(', '),
                           )
                         else
-                          _InfoRow(
+                          const _InfoRow(
                             label: 'Disability Types',
                             value: 'Open to everyone',
                           ),

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../../core/utils/validators.dart';
+import '../../../../../demo/demo_mode.dart';
 import '../../../../../models/enums/profile_managed_by.dart';
 import '../../../../../routing/route_names.dart';
 import '../../../../../shared/widgets/accessible_button.dart';
@@ -48,6 +49,10 @@ class _RegistrationCardState extends ConsumerState<RegistrationCard> {
           (RegistrationDraft d) =>
               d.copyWith(fullName: _nameController.text.trim()),
         );
+    if (kDemoMode) {
+      demoSignIn(ref);
+      return;
+    }
     ref
         .read(loginProvider.notifier)
         .sendOtp(Validators.phoneToE164(_phoneController.text));
@@ -59,8 +64,9 @@ class _RegistrationCardState extends ConsumerState<RegistrationCard> {
       LoginState? previous,
       LoginState next,
     ) {
-      if (next is LoginOtpSent && previous is LoginSendingOtp)
+      if (next is LoginOtpSent && previous is LoginSendingOtp) {
         context.go(RouteNames.otp);
+      }
     });
 
     final LoginState loginState = ref.watch(loginProvider);
@@ -152,7 +158,9 @@ class _RegistrationCardState extends ConsumerState<RegistrationCard> {
                     label: managedBy.isSelf
                         ? 'Mobile number'
                         : 'Your mobile number',
-                    helperText: 'We’ll send a one-time code to verify it',
+                    helperText: kDemoMode
+                        ? 'Demo: no code is sent'
+                        : 'We’ll send a one-time code to verify it',
                     controller: _phoneController,
                     keyboardType: TextInputType.phone,
                     textInputAction: TextInputAction.done,

@@ -13,7 +13,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
-from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
+from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.models.enums import ModerationStatusEnum, VisibilityTier
 from app.models.profile_photo import ProfilePhoto
 from app.repositories.photo_repository import MAX_PHOTOS_PER_PROFILE
@@ -50,6 +50,7 @@ def _make_service(repo: AsyncMock, signed_url: str = "https://signed.example/pho
     mock_blob = MagicMock()
     mock_blob.generate_signed_url.return_value = signed_url
     mock_blob.exists.return_value = True
+    mock_blob.size = 1024
 
     mock_bucket = MagicMock()
     mock_bucket.blob.return_value = mock_blob
@@ -147,6 +148,85 @@ class TestRegisterPhoto:
                 data=self._request(profile_id),
             )
 
+    @pytest.mark.asyncio
+    async def test_raises_bad_request_if_blob_missing_size(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        mock_blob = MagicMock()
+        mock_blob.exists.return_value = True
+        mock_blob.size = None
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+        with pytest.raises(BadRequestError, match="Could not verify size"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+
+    @pytest.mark.asyncio
+    async def test_raises_bad_request_and_deletes_if_oversized(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        mock_blob = MagicMock()
+        mock_blob.exists.return_value = True
+        mock_blob.size = 11 * 1024 * 1024  # 11MB
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+        with pytest.raises(BadRequestError, match="exceeds maximum allowed size"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+        
+        # Original blob gets deleted
+        mock_blob.delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_oversized_cleanup_failure_still_raises_bad_request(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        mock_blob = MagicMock()
+        mock_blob.exists.return_value = True
+        mock_blob.size = 15 * 1024 * 1024
+        mock_blob.delete.side_effect = Exception("Storage error")
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+        with pytest.raises(BadRequestError, match="exceeds maximum allowed size"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+
 # ---------------------------------------------------------------------------
 # create_upload_session
 # ---------------------------------------------------------------------------
@@ -181,6 +261,7 @@ class TestCreateUploadSession:
             method="PUT",
             credentials=ANY,
             version="v4",
+            headers={'x-goog-content-length-range': '0,10485760'},
             content_type="image/jpeg",
         )
 
@@ -192,6 +273,28 @@ class TestCreateUploadSession:
             await svc.create_upload_session(
                 profile_id=uuid.uuid4(),
                 requesting_profile_id=uuid.uuid4(),  # Different
+            )
+
+    @pytest.mark.asyncio
+    async def test_raises_service_unavailable_if_firebase_fails(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        # Simulate missing credentials raising ServiceUnavailableError
+        # _signed_url catches this, returns empty string
+        mock_bucket_factory = MagicMock(side_effect=ServiceUnavailableError("Firebase storage is not configured..."))
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=mock_bucket_factory,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+
+        with pytest.raises(ServiceUnavailableError, match="Failed to generate upload URLs due to a storage configuration error."):
+            await svc.create_upload_session(
+                profile_id=profile_id,
+                requesting_profile_id=profile_id,
             )
 
 

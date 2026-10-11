@@ -7,6 +7,8 @@ the app fails to start if a required secret is missing.
 
 See Architecture Section 3.2.
 """
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 
@@ -14,7 +16,7 @@ class Settings(BaseSettings):
     """Application settings — loaded from environment variables."""
 
     # --- Environment ---
-    ENVIRONMENT: str = "development"  # development | staging | production
+    ENVIRONMENT: Literal["development", "staging", "production"]  # REQUIRED
     LOG_LEVEL: str = "INFO"
     PLATFORM_ID: str = "divyang_matrimony"
 
