@@ -41,9 +41,12 @@ class SendOtpRequest(BaseModel):
     """POST /auth/send-otp — request an OTP for phone-based login/registration."""
 
     phone: str = Field(..., description="10-digit Indian phone or E.164 format")
-    platform_id: str = Field(
-        default="divyang_matrimony",
-        description="Platform identifier (multi-platform support §14)",
+    platform_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional echo of the client's platform. Ignored for access decisions: "
+            "the server resolves the platform and rejects a different value."
+        ),
     )
 
     @field_validator("phone")
@@ -57,7 +60,7 @@ class VerifyOtpRequest(BaseModel):
 
     phone: str = Field(..., description="Same phone used in send-otp")
     otp: str = Field(..., min_length=4, max_length=8, description="OTP received via SMS")
-    platform_id: str = Field(default="divyang_matrimony")
+    platform_id: str | None = Field(default=None)
     fcm_token: str | None = Field(
         default=None,
         description="Firebase push token. Updated in users.fcm_token on login.",
@@ -86,7 +89,7 @@ class AdminLoginRequest(BaseModel):
 
     email: EmailStr = Field(..., description="Admin account email address")
     password: str = Field(..., min_length=8, description="Admin password")
-    platform_id: str = Field(default="divyang_matrimony")
+    platform_id: str | None = Field(default=None)
     device_info: str | None = Field(default=None, max_length=255)
 
 

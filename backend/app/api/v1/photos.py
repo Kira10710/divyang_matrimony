@@ -23,6 +23,7 @@ from app.core.dependencies import (
     get_current_active_user,
     get_photo_service,
     get_profile_repository,
+    get_profile_service,
 )
 from app.core.exceptions import NotFoundError
 from app.core.response import success_response
@@ -30,6 +31,7 @@ from app.models.enums import VisibilityTier
 from app.models.user import User
 from app.schemas.photo import PhotoRegisterRequest
 from app.services.photo_service import PhotoService
+from app.services.profile_service import ProfileService
 
 logger = structlog.get_logger(__name__)
 
@@ -161,25 +163,29 @@ async def list_profile_photos(
     profile_id: uuid.UUID,
     current_user: User = Depends(get_current_active_user),
     photo_svc: PhotoService = Depends(get_photo_service),
+    profile_svc: ProfileService = Depends(get_profile_service),  # noqa: B008 - FastAPI dependency injection
     profile_repo=Depends(get_profile_repository),
 ):
+    # Reuse the profile detail authorization decision so hidden and
+    # cross-platform profiles cannot yield signed photo URLs through this
+    # alternate endpoint.
+    profile_out = await profile_svc.get_profile_by_id(
+        profile_id,
+        current_user,
+        has_active_subscription=False,
+        has_mutual_interest=False,
+    )
+    if profile_out.visibility_tier is None:
+        raise RuntimeError("Profile visibility tier was not resolved")
+
     # Resolve the viewer's own profile (if any) to determine tier.
     viewer_profile = await profile_repo.get_by_user_id(current_user.id)
     viewer_profile_id = viewer_profile.id if viewer_profile else None
 
-    # Tier resolution: owner → PRIVATE; everyone else → REGISTERED
-    # (Full tier logic — SUBSCRIBERS, MATCHED — belongs in a future
-    # subscription-aware tier resolver. For now we use REGISTERED as the
-    # floor for authenticated non-owner viewers, per Architecture §6.)
-    if viewer_profile_id == profile_id:
-        tier = VisibilityTier.PRIVATE
-    else:
-        tier = VisibilityTier.REGISTERED
-
     result = await photo_svc.list_photos(
         profile_id=profile_id,
         requesting_profile_id=viewer_profile_id,
-        viewer_tier=tier,
+        viewer_tier=profile_out.visibility_tier,
     )
     return success_response(data=result.model_dump(), message="Success")
 

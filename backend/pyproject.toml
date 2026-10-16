@@ -63,10 +63,18 @@ dev = [
     "httpx>=0.28.0",               # TestClient
     "factory-boy>=3.3.0",          # Test data factories
     "aiosqlite>=0.20.0",           # In-memory async DB for repository/API tests — see tests/conftest.py
-    "ruff>=0.8.0",                 # Linter + formatter
+    "ruff>=0.16.2,<0.17",          # Linter + formatter. Bounded: the CI lint/format baselines (scripts/ci_quality.py) are tied to this rule set
     "mypy>=1.13.0",                # Type checker
     "pip-audit>=2.7.0",            # Dependency vulnerability scanning
+    "pyyaml>=6.0",                 # tests/unit/test_ci_workflow.py parses the GitHub Actions workflow
 ]
+
+# Only `app` is an importable package. Without this, setuptools' flat-layout auto-discovery sees
+# app/, alembic/ and nginx/ and aborts `pip install -e .` ("Multiple top-level packages discovered"),
+# which would fail every CI job at the install step. The Docker builder stage installs from
+# pyproject.toml alone (no app/ present), which stays valid.
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.ruff]
 line-length = 120

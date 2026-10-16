@@ -11,11 +11,12 @@ import uuid
 import structlog
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.dependencies import get_photo_service, require_any_admin
+from app.core.dependencies import get_photo_service, require_admin_or_above
 from app.core.response import success_response
 from app.models.user import User
 from app.schemas.photo import PhotoModerationRejectRequest
 from app.services.photo_service import PhotoService
+from app.services.visibility_service import admin_platform_scope
 
 logger = structlog.get_logger(__name__)
 
@@ -31,10 +32,12 @@ router = APIRouter(prefix="/photos", tags=["Admin Photos"])
 async def get_moderation_queue(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_admin: User = Depends(require_any_admin()),
+    current_admin: User = Depends(require_admin_or_above()),
     photo_svc: PhotoService = Depends(get_photo_service),
 ) -> dict:
-    result = await photo_svc.get_moderation_queue(limit=limit, offset=offset)
+    result = await photo_svc.get_moderation_queue(
+        limit=limit, offset=offset, platform_scope=admin_platform_scope(current_admin)
+    )
     return success_response(
         data=result.model_dump(mode="json"),
         message="Moderation queue retrieved",
@@ -49,10 +52,12 @@ async def get_moderation_queue(
 )
 async def approve_photo(
     photo_id: uuid.UUID,
-    current_admin: User = Depends(require_any_admin()),
+    current_admin: User = Depends(require_admin_or_above()),
     photo_svc: PhotoService = Depends(get_photo_service),
 ) -> dict:
-    result = await photo_svc.approve_photo(photo_id)
+    result = await photo_svc.approve_photo(
+        photo_id, platform_scope=admin_platform_scope(current_admin)
+    )
     logger.info(
         "admin.photo_approved",
         admin_id=str(current_admin.id),
@@ -73,10 +78,14 @@ async def approve_photo(
 async def reject_photo(
     photo_id: uuid.UUID,
     body: PhotoModerationRejectRequest,
-    current_admin: User = Depends(require_any_admin()),
+    current_admin: User = Depends(require_admin_or_above()),
     photo_svc: PhotoService = Depends(get_photo_service),
 ) -> dict:
-    result = await photo_svc.reject_photo(photo_id, body.rejection_reason)
+    result = await photo_svc.reject_photo(
+        photo_id,
+        body.rejection_reason,
+        platform_scope=admin_platform_scope(current_admin),
+    )
     logger.info(
         "admin.photo_rejected",
         admin_id=str(current_admin.id),

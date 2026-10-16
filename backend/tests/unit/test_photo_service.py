@@ -45,12 +45,24 @@ def _make_photo(
     return photo
 
 
+def _image_bytes(fmt: str = "JPEG") -> bytes:
+    """A tiny but real image: registration re-encodes it to strip metadata."""
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (8, 8), (200, 30, 60)).save(out, fmt)
+    return out.getvalue()
+
+
 def _make_service(repo: AsyncMock, signed_url: str = "https://signed.example/photo") -> PhotoService:
     """Create a PhotoService with mocked Firebase factories."""
     mock_blob = MagicMock()
     mock_blob.generate_signed_url.return_value = signed_url
     mock_blob.exists.return_value = True
     mock_blob.size = 1024
+    mock_blob.download_as_bytes.return_value = _image_bytes("JPEG")
 
     mock_bucket = MagicMock()
     mock_bucket.blob.return_value = mock_blob
@@ -227,6 +239,219 @@ class TestRegisterPhoto:
                 data=self._request(profile_id),
             )
 
+    @pytest.mark.asyncio
+    async def test_raises_bad_request_and_deletes_if_invalid_format(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        mock_blob = MagicMock()
+        mock_blob.exists.return_value = True
+        mock_blob.size = 1024
+        mock_blob.download_as_bytes.return_value = b"<html><script>alert(1)</script></html>"
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+        with pytest.raises(BadRequestError, match="not a valid JPEG, PNG, or WebP image"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+
+        mock_blob.delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_accepts_valid_png_and_webp(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+        created = _make_photo(profile_id=profile_id, moderation_status=ModerationStatusEnum.PENDING)
+        repo.create.return_value = created
+
+        for valid_header in (
+            _image_bytes("PNG"),
+            _image_bytes("WEBP"),
+        ):
+            mock_blob = MagicMock()
+            mock_blob.exists.return_value = True
+            mock_blob.size = 1024
+            mock_blob.download_as_bytes.return_value = valid_header
+            mock_bucket = MagicMock()
+            mock_bucket.blob.return_value = mock_blob
+
+            svc = PhotoService(
+                photo_repo=repo,
+                bucket_factory=lambda bucket=mock_bucket: bucket,
+                gcs_credentials_factory=lambda: MagicMock(),
+            )
+            result = await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+            assert result.moderation_status == ModerationStatusEnum.PENDING
+
+    @pytest.mark.asyncio
+    async def test_zero_byte_blob_triggers_cleanup_and_raises_bad_request(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        blobs: dict[str, MagicMock] = {}
+        def _get_blob(path: str) -> MagicMock:
+            if path not in blobs:
+                b = MagicMock()
+                b.exists.return_value = True
+                if "thumbnail" in path:
+                    b.size = 0
+                else:
+                    b.size = 1024
+                    b.download_as_bytes.return_value = _image_bytes("JPEG")
+                blobs[path] = b
+            return blobs[path]
+
+        mock_bucket = MagicMock()
+        mock_bucket.blob.side_effect = _get_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+
+        with pytest.raises(BadRequestError, match="empty or unreadable"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+
+        req = self._request(profile_id)
+        for p in (req.storage_path, req.medium_path, req.thumbnail_path):
+            blobs[p].delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_partial_validation_failure_deletes_all_upload_variants(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        blobs: dict[str, MagicMock] = {}
+        def _get_blob(path: str) -> MagicMock:
+            if path not in blobs:
+                b = MagicMock()
+                b.exists.return_value = True
+                b.size = 1024
+                if "thumbnail" in path:
+                    b.download_as_bytes.return_value = b"NOT_AN_IMAGE_HEADER"
+                else:
+                    b.download_as_bytes.return_value = _image_bytes("JPEG")
+                blobs[path] = b
+            return blobs[path]
+
+        mock_bucket = MagicMock()
+        mock_bucket.blob.side_effect = _get_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+
+        with pytest.raises(BadRequestError, match="not a valid JPEG, PNG, or WebP image"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+
+        req = self._request(profile_id)
+        for p in (req.storage_path, req.medium_path, req.thumbnail_path):
+            blobs[p].delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_failure_preserves_original_validation_error(self) -> None:
+        profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        blobs: dict[str, MagicMock] = {}
+        def _get_blob(path: str) -> MagicMock:
+            if path not in blobs:
+                b = MagicMock()
+                b.exists.return_value = True
+                b.size = 1024
+                b.download_as_bytes.return_value = b"INVALID_DATA"
+                b.delete.side_effect = RuntimeError("Storage delete failed")
+                blobs[path] = b
+            return blobs[path]
+
+        mock_bucket = MagicMock()
+        mock_bucket.blob.side_effect = _get_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+
+        with pytest.raises(BadRequestError, match="not a valid JPEG, PNG, or WebP image"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=self._request(profile_id),
+            )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_does_not_delete_unrelated_objects(self) -> None:
+        profile_id = uuid.uuid4()
+        other_profile_id = uuid.uuid4()
+        repo = AsyncMock()
+        repo.count_for_profile.return_value = 0
+
+        unrelated_path = f"profiles/{other_profile_id}/original.jpg"
+        data = PhotoRegisterRequest(
+            storage_path=unrelated_path,
+            medium_path=f"profiles/{profile_id}/medium.jpg",
+            thumbnail_path=f"profiles/{profile_id}/thumbnail.jpg",
+        )
+
+        unrelated_blob = MagicMock()
+        profile_blob = MagicMock()
+        def _get_blob(path: str) -> MagicMock:
+            return unrelated_blob if path == unrelated_path else profile_blob
+
+        mock_bucket = MagicMock()
+        mock_bucket.blob.side_effect = _get_blob
+
+        svc = PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+
+        with pytest.raises(BadRequestError, match="Invalid storage path"):
+            await svc.register_photo(
+                profile_id=profile_id,
+                owner_user_id=uuid.uuid4(),
+                requesting_profile_id=profile_id,
+                data=data,
+            )
+
+        unrelated_blob.delete.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # create_upload_session
 # ---------------------------------------------------------------------------
@@ -282,7 +507,7 @@ class TestCreateUploadSession:
         repo.count_for_profile.return_value = 0
 
         # Simulate missing credentials raising ServiceUnavailableError
-        # _signed_url catches this, returns empty string
+        # _signed_url converts any signing failure into ServiceUnavailableError
         mock_bucket_factory = MagicMock(side_effect=ServiceUnavailableError("Firebase storage is not configured..."))
 
         svc = PhotoService(
@@ -291,7 +516,7 @@ class TestCreateUploadSession:
             gcs_credentials_factory=lambda: MagicMock(),
         )
 
-        with pytest.raises(ServiceUnavailableError, match="Failed to generate upload URLs due to a storage configuration error."):
+        with pytest.raises(ServiceUnavailableError, match="Photo storage is temporarily unavailable"):
             await svc.create_upload_session(
                 profile_id=profile_id,
                 requesting_profile_id=profile_id,
@@ -366,8 +591,8 @@ class TestSignedUrls:
         assert out.signed_urls.original_url == "https://signed.example/x"
         assert blob.generate_signed_url.call_count == 3
 
-    def test_signed_url_error_returns_empty_string(self) -> None:
-        """If Firebase throws, the URL is '' rather than crashing the response."""
+    def test_signed_url_error_raises_service_unavailable(self) -> None:
+        """If Firebase throws, the response fails with 503 instead of carrying an empty URL."""
         mock_blob = MagicMock()
         mock_blob.generate_signed_url.side_effect = Exception("Firebase error")
         mock_bucket = MagicMock()
@@ -380,8 +605,8 @@ class TestSignedUrls:
         )
         profile_id = uuid.uuid4()
         photo = _make_photo(profile_id=profile_id, moderation_status=ModerationStatusEnum.APPROVED)
-        out = svc._build_response(photo, VisibilityTier.PUBLIC)
-        assert out.signed_urls.thumbnail_url == ""
+        with pytest.raises(ServiceUnavailableError):
+            svc._build_response(photo, VisibilityTier.PUBLIC)
 
 
 # ---------------------------------------------------------------------------

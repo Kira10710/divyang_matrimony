@@ -25,6 +25,7 @@ from app.core.dependencies import (
     get_auth_service,
     get_current_active_user,
     get_request_context,
+    resolve_request_platform,
 )
 from app.core.response import ApiResponse, success_response
 from app.models.user import User
@@ -64,9 +65,11 @@ async def send_otp(
     request: Request,
     auth_service: AuthService = Depends(get_auth_service),
 ) -> dict:
+    ctx = get_request_context(request)
     await auth_service.send_otp(
         phone=body.phone,
-        platform_id=body.platform_id,
+        platform_id=resolve_request_platform(body.platform_id),
+        ip_address=ctx["ip_address"],
     )
     return success_response(message="OTP sent successfully")
 
@@ -91,7 +94,7 @@ async def verify_otp(
     result = await auth_service.verify_otp(
         phone=body.phone,
         otp_code=body.otp,
-        platform_id=body.platform_id,
+        platform_id=resolve_request_platform(body.platform_id),
         ip_address=ctx["ip_address"],
         user_agent=ctx["user_agent"],
         device_info=body.device_info,
@@ -128,7 +131,7 @@ async def admin_login(
     result = await auth_service.admin_login(
         email=str(body.email),
         password=body.password,
-        platform_id=body.platform_id,
+        platform_id=resolve_request_platform(body.platform_id),
         ip_address=ctx["ip_address"],
         user_agent=ctx["user_agent"],
         device_info=body.device_info,

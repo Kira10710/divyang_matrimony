@@ -21,11 +21,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 import app.services.auth_service as auth_service_module
+from app.core.config import settings
 from app.core.exceptions import (
     AccountBannedError,
     AccountLockedError,
     InvalidTokenError,
     OtpError,
+    RateLimitError,
     TokenExpiredError,
     UnauthorizedError,
 )
@@ -90,6 +92,7 @@ def mock_user_repo() -> AsyncMock:
 def mock_session_repo() -> AsyncMock:
     mock = AsyncMock(spec=ISessionRepository)
     mock.list_active_sessions.return_value = []
+    mock.count_recent_failures.return_value = 0
     return mock
 
 
@@ -124,13 +127,13 @@ class TestSendOtp:
 
         mock_otp_service.send_otp.assert_awaited_once_with(PHONE, PLATFORM)
 
-    async def test_banned_user_is_rejected_before_sending(
+    async def test_banned_user_gets_a_normal_response_but_no_otp(
         self, auth_service: AuthService, mock_user_repo: AsyncMock, mock_otp_service: AsyncMock
     ) -> None:
+        """No enumeration: the caller cannot tell a banned number from any other."""
         mock_user_repo.get_by_phone.return_value = _build_user(is_banned=True)
 
-        with pytest.raises(AccountBannedError):
-            await auth_service.send_otp(PHONE, PLATFORM)
+        await auth_service.send_otp(PHONE, PLATFORM)  # does not raise
 
         mock_otp_service.send_otp.assert_not_awaited()
 
@@ -426,6 +429,78 @@ class TestAdminLogin:
 
         assert result.tokens.access_token
 
+    async def test_admin_with_prior_failures_can_still_login_with_correct_password(
+        self,
+        auth_service: AuthService,
+        mock_user_repo: AsyncMock,
+        mock_session_repo: AsyncMock,
+    ) -> None:
+        admin = self._build_admin()
+        mock_user_repo.get_by_email.return_value = admin
+        mock_session_repo.count_recent_failures.return_value = settings.AUTH_MAX_FAILED_ATTEMPTS
+
+        result = await auth_service.admin_login(self.ADMIN_EMAIL, self.ADMIN_PASSWORD, PLATFORM)
+
+        assert result.tokens.access_token
+        mock_session_repo.create_session.assert_awaited_once()
+        assert mock_session_repo.log_event.await_args.kwargs["event_type"] == LoginEventTypeEnum.LOGIN_SUCCESS
+
+    async def test_admin_with_prior_failures_gets_generic_unauthorized_on_wrong_password(
+        self,
+        auth_service: AuthService,
+        mock_user_repo: AsyncMock,
+        mock_session_repo: AsyncMock,
+    ) -> None:
+        admin = self._build_admin()
+        mock_user_repo.get_by_email.return_value = admin
+        mock_session_repo.count_recent_failures.return_value = settings.AUTH_MAX_FAILED_ATTEMPTS
+
+        with pytest.raises(UnauthorizedError, match="Invalid email or password"):
+            await auth_service.admin_login(self.ADMIN_EMAIL, "WrongPassword1", PLATFORM)
+
+        assert mock_session_repo.log_event.await_args.kwargs["event_type"] == LoginEventTypeEnum.LOGIN_FAILED
+        assert mock_session_repo.log_event.await_args.kwargs["user_id"] == admin.id
+
+    async def test_admin_login_enforces_ip_rate_limiting(
+        self,
+        auth_service: AuthService,
+        mock_otp_service: AsyncMock,
+    ) -> None:
+        mock_otp_service.check_admin_ip_rate_limit.side_effect = RateLimitError("Too many admin login attempts")
+
+        with pytest.raises(RateLimitError):
+            await auth_service.admin_login(
+                self.ADMIN_EMAIL,
+                self.ADMIN_PASSWORD,
+                PLATFORM,
+                ip_address="198.51.100.1",
+            )
+
+        mock_otp_service.check_admin_ip_rate_limit.assert_awaited_once_with("198.51.100.1", PLATFORM)
+
+    async def test_unknown_admin_uses_precomputed_dummy_hash(
+        self,
+        auth_service: AuthService,
+        mock_user_repo: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_user_repo.get_by_email.return_value = None
+        called_with_hashes = []
+
+        orig_verify = auth_service_module.verify_password
+
+        def _spy_verify(plain: str, hashed: str) -> bool:
+            called_with_hashes.append(hashed)
+            return orig_verify(plain, hashed)
+
+        monkeypatch.setattr(auth_service_module, "verify_password", _spy_verify)
+
+        with pytest.raises(UnauthorizedError):
+            await auth_service.admin_login("unknown@example.com", "any_password", PLATFORM)
+
+        assert auth_service_module._ADMIN_DUMMY_HASH in called_with_hashes
+
+
 
 class TestRefreshTokens:
     def _mint_refresh_token(
@@ -449,7 +524,7 @@ class TestRefreshTokens:
 
         assert new_tokens.access_token
         assert new_tokens.refresh_token
-        mock_session_repo.revoke_session.assert_awaited_once_with(old_session)
+        mock_session_repo.revoke_if_active.assert_awaited_once_with(old_session)
         mock_session_repo.create_session.assert_awaited_once()
         assert (
             mock_session_repo.log_event.await_args.kwargs["event_type"]
@@ -546,11 +621,12 @@ class TestLogout:
     async def test_revokes_the_matching_session(
         self, auth_service: AuthService, mock_session_repo: AsyncMock
     ) -> None:
-        token, jti = create_refresh_token(user_id=uuid.uuid4(), platform_id=PLATFORM)
-        session = _build_session(refresh_token_jti=str(jti))
+        user_id = uuid.uuid4()
+        token, jti = create_refresh_token(user_id=user_id, platform_id=PLATFORM)
+        session = _build_session(user_id=user_id, refresh_token_jti=str(jti))
         mock_session_repo.get_session_by_jti.return_value = session
 
-        await auth_service.logout(token, user_id=session.user_id)
+        await auth_service.logout(token, user_id=user_id)
 
         mock_session_repo.revoke_session.assert_awaited_once_with(session)
         assert mock_session_repo.log_event.await_args.kwargs["event_type"] == LoginEventTypeEnum.LOGOUT
@@ -558,25 +634,68 @@ class TestLogout:
     async def test_already_revoked_session_is_not_revoked_again(
         self, auth_service: AuthService, mock_session_repo: AsyncMock
     ) -> None:
-        token, jti = create_refresh_token(user_id=uuid.uuid4(), platform_id=PLATFORM)
-        mock_session_repo.get_session_by_jti.return_value = _build_session(
-            refresh_token_jti=str(jti), is_revoked=True
+        user_id = uuid.uuid4()
+        token, jti = create_refresh_token(user_id=user_id, platform_id=PLATFORM)
+        session = _build_session(
+            user_id=user_id, refresh_token_jti=str(jti), is_revoked=True
         )
+        mock_session_repo.get_session_by_jti.return_value = session
 
-        await auth_service.logout(token, user_id=uuid.uuid4())
+        await auth_service.logout(token, user_id=user_id)
 
         mock_session_repo.revoke_session.assert_not_awaited()
 
-    async def test_missing_session_still_logs_logout(
+    async def test_logout_subject_mismatch_raises_unauthorized_without_db_lookup(
         self, auth_service: AuthService, mock_session_repo: AsyncMock
     ) -> None:
-        token, _jti = create_refresh_token(user_id=uuid.uuid4(), platform_id=PLATFORM)
-        mock_session_repo.get_session_by_jti.return_value = None
+        real_user_id = uuid.uuid4()
+        other_user_id = uuid.uuid4()
+        token, _jti = create_refresh_token(user_id=real_user_id, platform_id=PLATFORM)
 
-        await auth_service.logout(token, user_id=uuid.uuid4())
+        with pytest.raises(UnauthorizedError, match="Session does not belong to this user"):
+            await auth_service.logout(token, user_id=other_user_id)
+
+        mock_session_repo.get_session_by_jti.assert_not_awaited()
+        mock_session_repo.revoke_session.assert_not_awaited()
+        mock_session_repo.log_event.assert_not_awaited()
+
+    async def test_session_user_mismatch_raises_unauthorized_and_does_not_revoke(
+        self, auth_service: AuthService, mock_session_repo: AsyncMock
+    ) -> None:
+        caller_id = uuid.uuid4()
+        other_user_id = uuid.uuid4()
+        token, jti = create_refresh_token(user_id=caller_id, platform_id=PLATFORM)
+        other_session = _build_session(
+            user_id=other_user_id, refresh_token_jti=str(jti), is_revoked=False
+        )
+        mock_session_repo.get_session_by_jti.return_value = other_session
+
+        with pytest.raises(UnauthorizedError, match="Session does not belong to this user"):
+            await auth_service.logout(token, user_id=caller_id)
 
         mock_session_repo.revoke_session.assert_not_awaited()
-        mock_session_repo.log_event.assert_awaited_once()
+        mock_session_repo.log_event.assert_not_awaited()
+
+    async def test_missing_or_revoked_session_does_not_log_or_revoke(
+        self, auth_service: AuthService, mock_session_repo: AsyncMock
+    ) -> None:
+        caller_id = uuid.uuid4()
+        token, _jti = create_refresh_token(user_id=caller_id, platform_id=PLATFORM)
+        mock_session_repo.get_session_by_jti.return_value = None
+
+        # When session is missing, logout returns cleanly without creating misleading audit events
+        await auth_service.logout(token, user_id=caller_id)
+
+        mock_session_repo.revoke_session.assert_not_awaited()
+        mock_session_repo.log_event.assert_not_awaited()
+
+        # When session is already revoked, also does not re-revoke or log event
+        mock_session_repo.get_session_by_jti.return_value = _build_session(
+            user_id=caller_id, is_revoked=True
+        )
+        await auth_service.logout(token, user_id=caller_id)
+        mock_session_repo.revoke_session.assert_not_awaited()
+        mock_session_repo.log_event.assert_not_awaited()
 
     async def test_expired_refresh_token_raises_invalid_token_not_token_expired(
         self, auth_service: AuthService

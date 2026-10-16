@@ -14,15 +14,21 @@ import structlog
 from app.core.config import settings
 
 # Fields that should never appear in logs
-_SENSITIVE_KEYS = {"password", "token", "access_token", "refresh_token", "secret", "otp"}
+_SENSITIVE_KEYS = {
+    "password", "password_hash", "token", "access_token", "refresh_token", "secret", "otp",
+    "authorization", "phone", "email", "fcm_token", "code", "api_key",
+}
+# Any key containing one of these fragments is redacted too (e.g. "jwt_secret_key").
+_SENSITIVE_FRAGMENTS = ("password", "secret", "token", "authorization", "api_key")
 
 
 def _redact_sensitive_fields(
     logger: logging.Logger, method_name: str, event_dict: dict
 ) -> dict:
     """Structlog processor that replaces sensitive field values with '[REDACTED]'."""
-    for key in _SENSITIVE_KEYS:
-        if key in event_dict:
+    for key in list(event_dict):
+        lowered = str(key).lower()
+        if lowered in _SENSITIVE_KEYS or any(frag in lowered for frag in _SENSITIVE_FRAGMENTS):
             event_dict[key] = "[REDACTED]"
     return event_dict
 

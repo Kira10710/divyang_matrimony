@@ -45,13 +45,18 @@ class TestSendOtp:
         assert body["success"] is False
         assert body["errors"]
 
-    def test_banned_account_is_rejected(self, app_client: TestClient, make_user) -> None:
+    def test_banned_account_looks_identical_to_any_other_number(
+        self, app_client: TestClient, make_user, fake_redis: FakeRedis
+    ) -> None:
         asyncio.run(make_user(phone=PHONE, is_banned=True))
 
-        response = app_client.post("/api/v1/auth/send-otp", json={"phone": PHONE})
+        banned = app_client.post("/api/v1/auth/send-otp", json={"phone": PHONE})
+        unknown = app_client.post("/api/v1/auth/send-otp", json={"phone": "9123456780"})
 
-        assert response.status_code == 403
-        assert response.json()["errors"][0]["code"] == "ACCOUNT_BANNED"
+        assert banned.status_code == unknown.status_code == 200
+        assert banned.json() == unknown.json()
+        # ...but no code was generated for the banned number.
+        assert not any(PHONE in key for key in fake_redis._values)
 
 
 class TestVerifyOtp:
