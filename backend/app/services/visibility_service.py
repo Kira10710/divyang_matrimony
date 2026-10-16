@@ -60,6 +60,18 @@ def resolve_visibility_tier(
     return VisibilityTier.REGISTERED
 
 
+def admin_platform_scope(user: User) -> str | None:
+    """Platform an admin may act on: None = every platform (SUPER_ADMIN only).
+
+    Taken from the authenticated user's own row, never from the request.
+    ADMIN and SUPPORT are limited to their own platform (Architecture §7.8
+    gives only SUPER_ADMIN "everything").
+    """
+    if user.role == AdminRoleEnum.SUPER_ADMIN:
+        return None
+    return user.platform_id
+
+
 def _compute_age(dob: date) -> int:
     """Compute age from date of birth."""
     today = date.today()
@@ -75,7 +87,7 @@ def _compute_age(dob: date) -> int:
 
 # Fields visible at each tier (cumulative — higher tiers inherit lower)
 _PUBLIC_FIELDS: set[str] = {
-    "id", "user_id", "platform_id",
+    "id",
     "first_name", "gender", "age", "city", "state",
     "disability_type", "verification_status", "managed_by",
     "completeness_score", "is_profile_visible",
@@ -88,6 +100,7 @@ _REGISTERED_FIELDS: set[str] = _PUBLIC_FIELDS | {
 }
 
 _PRIVATE_FIELDS: set[str] = _REGISTERED_FIELDS | {
+    "user_id", "platform_id",
     "annual_income", "date_of_birth", "pincode",
     "created_at", "updated_at",
 }
@@ -163,11 +176,14 @@ def filter_profile_for_tier(
 
     data: dict = {
         "id": profile.id,
-        "user_id": profile.user_id,
-        "platform_id": profile.platform_id,
         "visibility_tier": tier,
         "age": age,
     }
+
+    # Internal identifiers are intentionally absent outside the PRIVATE tier.
+    for field in ("user_id", "platform_id"):
+        if field in allowed:
+            data[field] = getattr(profile, field)
 
     # Map profile fields, nulling out those not in the allowed set
     profile_field_names = [

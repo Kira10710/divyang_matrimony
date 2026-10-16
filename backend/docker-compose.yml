@@ -42,7 +42,7 @@ services:
       POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: divyang_matrimony
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # local dev only: never publish the database on all interfaces
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -57,7 +57,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:

@@ -14,6 +14,7 @@ Key: get_current_user validates the ACCESS token (stateless).
      Refresh endpoints validate the REFRESH token via active_sessions (stateful).
      The separation keeps normal API calls fast (no DB hit for auth).
 """
+import ipaddress
 import uuid
 
 import jwt
@@ -27,6 +28,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.exceptions import (
     AccountBannedError,
+    BadRequestError,
     ForbiddenError,
     InvalidTokenError,
     TokenExpiredError,
@@ -187,16 +189,60 @@ def require_any_admin():
     )
 
 
+def _valid_ip(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    return value.strip()
+
+
+def resolve_client_ip(request: Request) -> str | None:
+    """The client IP used for rate limits and session records.
+
+    With TRUSTED_PROXY_HOPS = 0 (default) X-Forwarded-For is ignored and the socket peer
+    is used. With N > 0 the client is the Nth entry from the RIGHT of X-Forwarded-For:
+    the N trusted proxies each append what they saw, so anything a client prepends sits to
+    the left and cannot spoof the result. Too few entries or an invalid IP falls back to
+    the socket peer.
+    """
+    peer = _valid_ip(request.client.host if request.client else None)
+    hops = settings.TRUSTED_PROXY_HOPS
+    if hops <= 0:
+        return peer
+    parts = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    if len(parts) < hops:
+        return peer
+    return _valid_ip(parts[-hops]) or peer
+
+
 def get_request_context(request: Request) -> dict:
     """
     Extract common request metadata for logging and session tracking.
 
-    Returns a dict with ip_address, user_agent.
+    Returns a dict with ip_address, user_agent. Sanitizes IP to valid IPv4/IPv6
+    format so database INET columns do not raise DataError on non-IP strings.
     """
+    valid_ip = resolve_client_ip(request)
     return {
-        "ip_address": request.client.host if request.client else None,
+        "ip_address": valid_ip,
         "user_agent": request.headers.get("user-agent"),
     }
+
+
+def resolve_request_platform(claimed: str | None) -> str:
+    """Return the platform this deployment serves; never trust the client's claim.
+
+    Architecture §19.1: platform_id comes from the server's platform context,
+    not the request body. A client may echo the platform it was built for, but
+    a different value is rejected, so nobody can enrol themselves into (or
+    probe) another tenant by choosing a platform string.
+    """
+    if claimed is not None and claimed != settings.PLATFORM_ID:
+        raise BadRequestError("Unknown platform.")
+    return settings.PLATFORM_ID
 
 
 # ---------------------------------------------------------------------------

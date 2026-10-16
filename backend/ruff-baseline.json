@@ -1,0 +1,664 @@
+{
+ "_policy": "Reviewed record of PRE-EXISTING Ruff violations. CI fails on any violation not listed here and on entries that no longer occur. Regenerate with `python scripts/ci_quality.py lint --update`; the diff must only ever remove entries. Never add entries to make a new violation pass.",
+ "total": 171,
+ "violations": [
+  {
+   "file": "alembic/env.py",
+   "code": "E402",
+   "line_hash": "8b2d309ca27d",
+   "count": 1,
+   "example": "from app.models import Base  # noqa: F401"
+  },
+  {
+   "file": "alembic/versions/0002_profile_tables.py",
+   "code": "E501",
+   "line_hash": "118af3d3ea70",
+   "count": 1,
+   "example": "sa.Column(\"disability_type\", postgresql.ENUM('PHYSICAL', 'VISUAL', 'HEARING', 'INTELLECTUA"
+  },
+  {
+   "file": "alembic/versions/0002_profile_tables.py",
+   "code": "E501",
+   "line_hash": "7299fe9c1b8a",
+   "count": 1,
+   "example": "sa.Column(\"preferred_gender\", postgresql.ENUM('MALE', 'FEMALE', 'OTHER', name='gender_enum"
+  },
+  {
+   "file": "alembic/versions/0002_profile_tables.py",
+   "code": "E501",
+   "line_hash": "b0f2754b60e7",
+   "count": 1,
+   "example": "postgresql.ARRAY(postgresql.ENUM('NEVER_MARRIED', 'DIVORCED', 'WIDOWED', 'SEPARATED', name"
+  },
+  {
+   "file": "alembic/versions/0002_profile_tables.py",
+   "code": "E501",
+   "line_hash": "b2652d327976",
+   "count": 1,
+   "example": "sa.Column(\"marital_status\", postgresql.ENUM('NEVER_MARRIED', 'DIVORCED', 'WIDOWED', 'SEPAR"
+  },
+  {
+   "file": "alembic/versions/0002_profile_tables.py",
+   "code": "E501",
+   "line_hash": "ed6214621379",
+   "count": 1,
+   "example": "postgresql.ARRAY(postgresql.ENUM('PHYSICAL', 'VISUAL', 'HEARING', 'INTELLECTUAL', 'MULTIPL"
+  },
+  {
+   "file": "alembic/versions/0002_profile_tables.py",
+   "code": "E501",
+   "line_hash": "f26aaa9d5c60",
+   "count": 1,
+   "example": "sa.Column(\"gender\", postgresql.ENUM('MALE', 'FEMALE', 'OTHER', name='gender_enum', create_"
+  },
+  {
+   "file": "app/api/admin/photos.py",
+   "code": "B008",
+   "line_hash": "346eb8b6a0f2",
+   "count": 3,
+   "example": "photo_svc: PhotoService = Depends(get_photo_service),"
+  },
+  {
+   "file": "app/api/admin/photos.py",
+   "code": "B008",
+   "line_hash": "a9bca4b350ee",
+   "count": 6,
+   "example": "current_admin: User = Depends(require_admin_or_above()),"
+  },
+  {
+   "file": "app/api/admin/router.py",
+   "code": "E402",
+   "line_hash": "c1c4fdb3cd86",
+   "count": 1,
+   "example": "from app.api.admin import photos"
+  },
+  {
+   "file": "app/api/v1/auth.py",
+   "code": "B008",
+   "line_hash": "ae615193a3da",
+   "count": 7,
+   "example": "auth_service: AuthService = Depends(get_auth_service),"
+  },
+  {
+   "file": "app/api/v1/auth.py",
+   "code": "B008",
+   "line_hash": "c9b62e3bec85",
+   "count": 4,
+   "example": "current_user: User = Depends(get_current_active_user),"
+  },
+  {
+   "file": "app/api/v1/auth.py",
+   "code": "B008",
+   "line_hash": "db21d4ca4778",
+   "count": 5,
+   "example": "db: AsyncSession = Depends(get_db),"
+  },
+  {
+   "file": "app/api/v1/auth.py",
+   "code": "F841",
+   "line_hash": "af247211bb12",
+   "count": 1,
+   "example": "payload = decode_access_token(auth_header[7:])"
+  },
+  {
+   "file": "app/api/v1/partner_preferences.py",
+   "code": "B008",
+   "line_hash": "86d09e379a4a",
+   "count": 2,
+   "example": "profile_svc: ProfileService = Depends(get_profile_service),"
+  },
+  {
+   "file": "app/api/v1/partner_preferences.py",
+   "code": "B008",
+   "line_hash": "aa8d9de77363",
+   "count": 2,
+   "example": "pref_svc: PartnerPreferenceService = Depends(get_partner_preference_service),"
+  },
+  {
+   "file": "app/api/v1/partner_preferences.py",
+   "code": "B008",
+   "line_hash": "c9b62e3bec85",
+   "count": 2,
+   "example": "current_user: User = Depends(get_current_active_user),"
+  },
+  {
+   "file": "app/api/v1/partner_preferences.py",
+   "code": "W293",
+   "line_hash": "da39a3ee5e6b",
+   "count": 2,
+   "example": ""
+  },
+  {
+   "file": "app/api/v1/photos.py",
+   "code": "B008",
+   "line_hash": "346eb8b6a0f2",
+   "count": 6,
+   "example": "photo_svc: PhotoService = Depends(get_photo_service),"
+  },
+  {
+   "file": "app/api/v1/photos.py",
+   "code": "B008",
+   "line_hash": "9e896f3f8d36",
+   "count": 6,
+   "example": "profile_repo=Depends(get_profile_repository),"
+  },
+  {
+   "file": "app/api/v1/photos.py",
+   "code": "B008",
+   "line_hash": "c9b62e3bec85",
+   "count": 6,
+   "example": "current_user: User = Depends(get_current_active_user),"
+  },
+  {
+   "file": "app/api/v1/profiles.py",
+   "code": "B008",
+   "line_hash": "346eb8b6a0f2",
+   "count": 2,
+   "example": "photo_svc: PhotoService = Depends(get_photo_service),"
+  },
+  {
+   "file": "app/api/v1/profiles.py",
+   "code": "B008",
+   "line_hash": "86d09e379a4a",
+   "count": 8,
+   "example": "profile_svc: ProfileService = Depends(get_profile_service),"
+  },
+  {
+   "file": "app/api/v1/profiles.py",
+   "code": "B008",
+   "line_hash": "aa8d9de77363",
+   "count": 3,
+   "example": "pref_svc: PartnerPreferenceService = Depends(get_partner_preference_service),"
+  },
+  {
+   "file": "app/api/v1/profiles.py",
+   "code": "B008",
+   "line_hash": "c9b62e3bec85",
+   "count": 8,
+   "example": "current_user: User = Depends(get_current_active_user),"
+  },
+  {
+   "file": "app/api/v1/profiles.py",
+   "code": "B008",
+   "line_hash": "d48d0cf96468",
+   "count": 2,
+   "example": "sensitive_svc: SensitiveDataService = Depends(get_sensitive_data_service),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "14390b9455fd",
+   "count": 1,
+   "example": "pref_repo=Depends(get_partner_preference_repository),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "1d81a7001eef",
+   "count": 1,
+   "example": "def get_sensitive_data_repository(db: AsyncSession = Depends(get_db)):"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "2343ca6c2bca",
+   "count": 1,
+   "example": "sensitive_repo=Depends(get_sensitive_data_repository),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "297739292252",
+   "count": 1,
+   "example": "photo_repo=Depends(get_photo_repository),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "38a8ac816619",
+   "count": 1,
+   "example": "sensitive_svc=Depends(get_sensitive_data_service),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "478d5869dcb2",
+   "count": 1,
+   "example": "session_repo: SessionRepository = Depends(get_session_repository),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "6a6e89b3852b",
+   "count": 1,
+   "example": "otp_service: IOtpService = Depends(get_otp_service),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "6d734acc01e4",
+   "count": 1,
+   "example": "redis: aioredis.Redis = Depends(get_redis),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "79d89ef55090",
+   "count": 1,
+   "example": "def get_partner_preference_repository(db: AsyncSession = Depends(get_db)):"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "8072294ece3c",
+   "count": 1,
+   "example": "user_repo: UserRepository = Depends(get_user_repository),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "9e896f3f8d36",
+   "count": 1,
+   "example": "profile_repo=Depends(get_profile_repository),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "9f0bffe00e33",
+   "count": 1,
+   "example": "config_repo=Depends(get_platform_config_repository),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "b8b2335fcf8b",
+   "count": 2,
+   "example": "platform_svc=Depends(get_platform_config_service),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "c9b62e3bec85",
+   "count": 1,
+   "example": "current_user: User = Depends(get_current_active_user),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "cf10c9d0600b",
+   "count": 1,
+   "example": "def get_platform_config_repository(db: AsyncSession = Depends(get_db)):"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "db21d4ca4778",
+   "count": 1,
+   "example": "db: AsyncSession = Depends(get_db),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "ddb7f12c5a15",
+   "count": 1,
+   "example": "credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "df35a9af7f99",
+   "count": 1,
+   "example": "def get_profile_repository(db: AsyncSession = Depends(get_db)):"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "f164031fdde7",
+   "count": 1,
+   "example": "def get_photo_repository(db: AsyncSession = Depends(get_db)):"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "f2a578b68f11",
+   "count": 1,
+   "example": "def get_session_repository(db: AsyncSession = Depends(get_db)) -> SessionRepository:"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "f743cdf69bd9",
+   "count": 1,
+   "example": "current_user: User = Depends(get_current_user),"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B008",
+   "line_hash": "f7701114cbd1",
+   "count": 1,
+   "example": "def get_user_repository(db: AsyncSession = Depends(get_db)) -> UserRepository:"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B904",
+   "line_hash": "057bd33f4d2f",
+   "count": 1,
+   "example": "raise InvalidTokenError()"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B904",
+   "line_hash": "45a38684c0cb",
+   "count": 1,
+   "example": "raise TokenExpiredError()"
+  },
+  {
+   "file": "app/core/dependencies.py",
+   "code": "B904",
+   "line_hash": "c2ddbbaaf436",
+   "count": 1,
+   "example": "raise InvalidTokenError(\"Invalid user ID in token\")"
+  },
+  {
+   "file": "app/core/exceptions.py",
+   "code": "N818",
+   "line_hash": "490281c1ce6b",
+   "count": 1,
+   "example": "class AppException(Exception):"
+  },
+  {
+   "file": "app/core/firebase.py",
+   "code": "I001",
+   "line_hash": "fc59eec49d4c",
+   "count": 1,
+   "example": "from __future__ import annotations"
+  },
+  {
+   "file": "app/core/response.py",
+   "code": "UP046",
+   "line_hash": "cb2607c527e0",
+   "count": 1,
+   "example": "class ApiResponse(BaseModel, Generic[T]):"
+  },
+  {
+   "file": "app/models/login_history.py",
+   "code": "S105",
+   "line_hash": "e12af256c871",
+   "count": 1,
+   "example": "TOKEN_REFRESH = \"TOKEN_REFRESH\""
+  },
+  {
+   "file": "app/models/login_history.py",
+   "code": "UP042",
+   "line_hash": "5953ebf35982",
+   "count": 1,
+   "example": "class LoginEventTypeEnum(str, enum.Enum):"
+  },
+  {
+   "file": "app/models/user.py",
+   "code": "UP042",
+   "line_hash": "24322f40dc2c",
+   "count": 1,
+   "example": "class AdminRoleEnum(str, enum.Enum):"
+  },
+  {
+   "file": "app/repositories/base.py",
+   "code": "A002",
+   "line_hash": "eaab858f6993",
+   "count": 1,
+   "example": "async def get_by_id(self, id: UUID) -> ModelType | None:"
+  },
+  {
+   "file": "app/repositories/base.py",
+   "code": "UP046",
+   "line_hash": "ab483434679b",
+   "count": 1,
+   "example": "class BaseRepository(Generic[ModelType]):"
+  },
+  {
+   "file": "app/schemas/auth.py",
+   "code": "S105",
+   "line_hash": "6171fa284583",
+   "count": 1,
+   "example": "token_type: str = \"Bearer\""
+  },
+  {
+   "file": "app/schemas/common.py",
+   "code": "UP046",
+   "line_hash": "68ba60d5b57f",
+   "count": 1,
+   "example": "class PaginatedResponse(BaseModel, Generic[T]):"
+  },
+  {
+   "file": "app/schemas/common.py",
+   "code": "UP046",
+   "line_hash": "cb2607c527e0",
+   "count": 1,
+   "example": "class ApiResponse(BaseModel, Generic[T]):"
+  },
+  {
+   "file": "app/schemas/photo.py",
+   "code": "W293",
+   "line_hash": "da39a3ee5e6b",
+   "count": 2,
+   "example": ""
+  },
+  {
+   "file": "app/services/auth_service.py",
+   "code": "B904",
+   "line_hash": "057bd33f4d2f",
+   "count": 2,
+   "example": "raise InvalidTokenError()"
+  },
+  {
+   "file": "app/services/auth_service.py",
+   "code": "B904",
+   "line_hash": "45a38684c0cb",
+   "count": 1,
+   "example": "raise TokenExpiredError()"
+  },
+  {
+   "file": "app/services/auth_service.py",
+   "code": "E501",
+   "line_hash": "8086e125a00f",
+   "count": 1,
+   "example": "if isinstance(self._otp_service, __import__(\"app.services.otp_service\", fromlist=[\"RedisOt"
+  },
+  {
+   "file": "app/services/auth_service.py",
+   "code": "SIM102",
+   "line_hash": "8086e125a00f",
+   "count": 1,
+   "example": "if isinstance(self._otp_service, __import__(\"app.services.otp_service\", fromlist=[\"RedisOt"
+  },
+  {
+   "file": "app/services/photo_service.py",
+   "code": "E501",
+   "line_hash": "964a718cd085",
+   "count": 1,
+   "example": "def _signed_url(self, object_path: str, ttl: timedelta, method: str = \"GET\", headers: dict"
+  },
+  {
+   "file": "app/services/photo_service.py",
+   "code": "W293",
+   "line_hash": "da39a3ee5e6b",
+   "count": 6,
+   "example": ""
+  },
+  {
+   "file": "check_db2.py",
+   "code": "E501",
+   "line_hash": "673fea904798",
+   "count": 1,
+   "example": "res = await conn.execute(text(\"SELECT t.typname, n.nspname FROM pg_type t JOIN pg_namespac"
+  },
+  {
+   "file": "check_redis.py",
+   "code": "I001",
+   "line_hash": "851f99543c97",
+   "count": 1,
+   "example": "import asyncio"
+  },
+  {
+   "file": "fix_0002.py",
+   "code": "E501",
+   "line_hash": "4ae1a0f3e966",
+   "count": 1,
+   "example": "'marital_status_enum': \"postgresql.ENUM('NEVER_MARRIED', 'DIVORCED', 'WIDOWED', 'SEPARATED"
+  },
+  {
+   "file": "fix_0002.py",
+   "code": "E501",
+   "line_hash": "52c255ac8032",
+   "count": 1,
+   "example": "'managed_by_enum': \"postgresql.ENUM('SELF', 'PARENT', 'SIBLING', 'GUARDIAN', name='profile"
+  },
+  {
+   "file": "fix_0002.py",
+   "code": "E501",
+   "line_hash": "918d7c0ff73b",
+   "count": 1,
+   "example": "'verification_status_enum': \"postgresql.ENUM('PENDING', 'APPROVED', 'REJECTED', name='veri"
+  },
+  {
+   "file": "fix_0002.py",
+   "code": "E501",
+   "line_hash": "e2786c901a99",
+   "count": 1,
+   "example": "'disability_type_enum': \"postgresql.ENUM('PHYSICAL', 'VISUAL', 'HEARING', 'INTELLECTUAL', "
+  },
+  {
+   "file": "live_test.py",
+   "code": "E701",
+   "line_hash": "b526436f6c22",
+   "count": 2,
+   "example": "if resp.status_code != 200: return"
+  },
+  {
+   "file": "live_test.py",
+   "code": "F401",
+   "line_hash": "90cfd14fdbd3",
+   "count": 1,
+   "example": "import uuid"
+  },
+  {
+   "file": "live_test.py",
+   "code": "F401",
+   "line_hash": "f2f4a1237dbd",
+   "count": 1,
+   "example": "import json"
+  },
+  {
+   "file": "live_test.py",
+   "code": "F841",
+   "line_hash": "c3a9c42e9d11",
+   "count": 1,
+   "example": "redis = Redis.from_url(\"redis://localhost:6379/0\")"
+  },
+  {
+   "file": "live_test.py",
+   "code": "I001",
+   "line_hash": "851f99543c97",
+   "count": 1,
+   "example": "import asyncio"
+  },
+  {
+   "file": "live_test.py",
+   "code": "W293",
+   "line_hash": "da39a3ee5e6b",
+   "count": 10,
+   "example": ""
+  },
+  {
+   "file": "scripts/migrate.py",
+   "code": "S603",
+   "line_hash": "f4d5c37310d5",
+   "count": 1,
+   "example": "result = subprocess.run("
+  },
+  {
+   "file": "scripts/migrate.py",
+   "code": "S607",
+   "line_hash": "871b189ed520",
+   "count": 1,
+   "example": "[\"alembic\", \"upgrade\", revision],"
+  },
+  {
+   "file": "test_pg.py",
+   "code": "E501",
+   "line_hash": "11558e9aab07",
+   "count": 1,
+   "example": "await session.execute(text(f\"INSERT INTO profiles (id, user_id, platform_id, first_name, l"
+  },
+  {
+   "file": "test_pg.py",
+   "code": "E501",
+   "line_hash": "ca164bf95979",
+   "count": 1,
+   "example": "await session.execute(text(f\"INSERT INTO users (id, phone, platform_id) VALUES ('{user_id}"
+  },
+  {
+   "file": "test_pg.py",
+   "code": "S608",
+   "line_hash": "11558e9aab07",
+   "count": 1,
+   "example": "await session.execute(text(f\"INSERT INTO profiles (id, user_id, platform_id, first_name, l"
+  },
+  {
+   "file": "test_pg.py",
+   "code": "S608",
+   "line_hash": "8c052adbbeee",
+   "count": 1,
+   "example": "await session.execute(text(f\"DELETE FROM users WHERE id='{user_id}';\"))"
+  },
+  {
+   "file": "test_pg.py",
+   "code": "S608",
+   "line_hash": "ca164bf95979",
+   "count": 1,
+   "example": "await session.execute(text(f\"INSERT INTO users (id, phone, platform_id) VALUES ('{user_id}"
+  },
+  {
+   "file": "tests/conftest.py",
+   "code": "E402",
+   "line_hash": "2bc2b15ba339",
+   "count": 1,
+   "example": "from sqlalchemy.types import String, TypeDecorator"
+  },
+  {
+   "file": "tests/conftest.py",
+   "code": "E402",
+   "line_hash": "7ef1d060a158",
+   "count": 1,
+   "example": "from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY"
+  },
+  {
+   "file": "tests/conftest.py",
+   "code": "E402",
+   "line_hash": "f2f4a1237dbd",
+   "count": 1,
+   "example": "import json"
+  },
+  {
+   "file": "tests/integration/test_partner_preferences_api.py",
+   "code": "E501",
+   "line_hash": "12d83731215d",
+   "count": 1,
+   "example": "def test_update_existing_preferences(app_client: TestClient, test_profile_headers: dict, d"
+  },
+  {
+   "file": "tests/integration/test_partner_preferences_api.py",
+   "code": "E501",
+   "line_hash": "98962a257036",
+   "count": 1,
+   "example": "def test_unauthorized_access(app_client: TestClient, test_profile_headers: dict, other_pro"
+  },
+  {
+   "file": "tests/unit/test_photo_service.py",
+   "code": "W293",
+   "line_hash": "da39a3ee5e6b",
+   "count": 3,
+   "example": ""
+  }
+ ]
+}

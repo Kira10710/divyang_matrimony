@@ -1,0 +1,36 @@
+# Keep secrets, caches and developer tooling out of the image build context.
+# Docker matches patterns against the context ROOT only, so anything that must be excluded at any
+# depth needs a leading "**/" (a bare "*.json" would still let "secrets/firebase.json" in).
+
+# Secrets and key material, at any depth
+**/.env
+**/.env.*
+!**/.env.example
+**/*.json
+**/*.pem
+**/*.key
+**/*.p12
+
+# Caches, virtualenvs, VCS metadata
+**/.venv
+**/.git
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.coverage
+**/coverage.xml
+
+# Tests and local-only deployment files are not part of the runtime image
+tests
+docker-compose.yml
+nginx
+
+# Ad-hoc developer scripts that act on a live database
+check_db*.py
+check_redis.py
+clean_db.py
+fix_0002.py
+live_test.py
+test_pg.py

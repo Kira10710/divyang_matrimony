@@ -161,6 +161,16 @@ class TestAllowedFields:
         fields = get_allowed_profile_fields(VisibilityTier.REGISTERED)
         assert "date_of_birth" not in fields
 
+    def test_registered_does_not_have_internal_identifiers(self) -> None:
+        fields = get_allowed_profile_fields(VisibilityTier.REGISTERED)
+        assert "user_id" not in fields
+        assert "platform_id" not in fields
+
+    def test_private_has_internal_identifiers(self) -> None:
+        fields = get_allowed_profile_fields(VisibilityTier.PRIVATE)
+        assert "user_id" in fields
+        assert "platform_id" in fields
+
 
 class TestAllowedSensitiveFields:
 
@@ -215,6 +225,14 @@ class TestFilterProfileForTier:
         assert out.last_name == "Patel"
         assert out.annual_income == "3-5 LPA"
         assert out.date_of_birth == date(1998, 3, 20)
+        assert out.user_id == profile.user_id
+        assert out.platform_id == profile.platform_id
+
+    def test_registered_does_not_receive_internal_identifiers(self) -> None:
+        profile = _make_profile()
+        out = filter_profile_for_tier(profile, VisibilityTier.REGISTERED)
+        assert out.user_id is None
+        assert out.platform_id is None
 
     def test_age_always_computed(self) -> None:
         profile = _make_profile()

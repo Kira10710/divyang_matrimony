@@ -1,0 +1,13 @@
+# pip-audit ignore list (policy: see scripts/ci_quality.py and Architecture 12.1).
+#
+# Any known vulnerability in the installed dependencies FAILS the audit job unless it is listed here.
+# One entry per line:   VULN-ID  expires=YYYY-MM-DD  reason (why it is not exploitable here, and the fix plan)
+# Rules (all enforced by scripts/ci_quality.py; a violation fails CI before pip-audit runs):
+#   - ID is an advisory id (GHSA-..., PYSEC-..., CVE-...); it also matches that advisory's aliases
+#   - reason is mandatory and specific (at least 20 characters)
+#   - expiry is today or later and at most 120 days ahead; an expired entry fails CI so every exception is re-reviewed
+#   - each ID appears once
+# Prefer upgrading the dependency over adding an entry.
+#
+# Example (do not copy):
+#   GHSA-xxxx-xxxx-xxxx  expires=2026-12-31  affects an optional parser we never call; upgrade planned in milestone X

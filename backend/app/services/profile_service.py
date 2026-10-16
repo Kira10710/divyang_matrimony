@@ -19,7 +19,7 @@ import structlog
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.enums import VisibilityTier
 from app.models.profile import Profile
-from app.models.user import User
+from app.models.user import AdminRoleEnum, User
 from app.repositories.profile_repository import IProfileRepository
 from app.schemas.profile import (
     ProfileCreateRequest,
@@ -31,6 +31,7 @@ from app.services.completeness_service import calculate_completeness
 from app.services.platform_config_service import PlatformConfigService
 from app.services.sensitive_data_service import SensitiveDataService
 from app.services.visibility_service import (
+    admin_platform_scope,
     filter_profile_for_tier,
     resolve_visibility_tier,
 )
@@ -211,6 +212,13 @@ class ProfileService:
         The returned ProfileOut only contains fields the viewer is
         allowed to see. Sensitive data is NOT included in this response —
         it's accessed via a separate endpoint.
+
+        Authorization rules (applied before tier resolution):
+        1. Cross-platform: a user from platform A cannot read profiles from
+           platform B. Both cases return 404 to avoid confirming existence.
+        2. Visibility gate: a profile with is_profile_visible=False is
+           invisible to everyone except the owner and ADMIN+.
+        Both use NotFoundError so callers cannot enumerate hidden profiles.
         """
         profile = await self._profile_repo.get_by_id(profile_id)
         if profile is None:
@@ -222,6 +230,17 @@ class ProfileService:
             has_active_subscription=has_active_subscription,
             has_mutual_interest=has_mutual_interest,
         )
+
+        # F-4: cross-platform isolation — non-admins cannot read across tenants.
+        is_admin = viewer.role in (AdminRoleEnum.ADMIN, AdminRoleEnum.SUPER_ADMIN)
+        scope = admin_platform_scope(viewer) if is_admin else viewer.platform_id
+        is_owner = viewer.id == profile.user_id
+        if not is_owner and scope is not None and profile.platform_id != scope:
+            raise NotFoundError("Profile not found")
+
+        # F-1: visibility gate — respect the user's privacy preference.
+        if not profile.is_profile_visible and not is_owner and not is_admin:
+            raise NotFoundError("Profile not found")
 
         return filter_profile_for_tier(profile, tier)
 

@@ -588,6 +588,28 @@ Sections 7.1–7.6 unchanged from v1.0 (password hashing, JWT, rate limiting, in
 
 Enforced the same way as v1.0 (`require_role()` FastAPI dependency). Expand to finer-grained roles when the team actually has distinct people to put in them — the `role` column and dependency pattern already support adding more values later without a redesign.
 
+### 7.9 Tenant Isolation, Photo Handling and Admin Provisioning
+
+Clarifies how §7.8 is enforced in code (Phase B hardening). No product visibility rule changed.
+
+- **Platform comes from the server.** `platform_id` in an auth request body is only an optional echo; the server resolves the platform (`settings.PLATFORM_ID`) and rejects a different value with 400 (§19.1). Everything after login uses the authenticated user's own `platform_id` from the database, never a caller-supplied one.
+- **Admin scope.** `ADMIN` and `SUPPORT` can only read profiles and moderate photos on their own platform; a profile or photo on another platform answers 404 (same as "does not exist"). Only `SUPER_ADMIN` is global. Moderation writes carry the platform condition inside the same `UPDATE`, so there is no check-then-write gap.
+- **Photo moderation is `ADMIN` and above.** `SUPPORT` cannot see the queue or approve/reject (§7.8, §10).
+- **Hidden profiles** (`is_profile_visible = FALSE`) are visible only to the owner and admins of the same platform (and `SUPER_ADMIN`). The photo-list endpoint reuses the same decision, so it cannot be used to bypass it.
+- **Metadata stripping.** At photo registration the server downloads each variant, re-encodes it without EXIF/GPS/XMP/ICC (orientation is applied to the pixels first), checks the result carries no metadata, and overwrites the object. Images over about 40 megapixels or that fail to decode are rejected. Failures delete the uploaded variants.
+- **Signed-URL failure** is a `503 ServiceUnavailableError` in the standard envelope; the API never returns an empty URL.
+- **Primary photo.** Rejecting or deleting the primary photo promotes the next approved photo (lowest `display_order`), so a profile with approved photos always has one primary.
+- **Admin provisioning** is an operator action, not an API: `python scripts/create_admin.py` (rules in `app/services/admin_service.py`). A platform is mandatory and must exist and be active; passwords are at least 12 characters with letters and digits, read with `getpass` or stdin; `SUPER_ADMIN` needs both `--allow-super-admin` and `ALLOW_SUPER_ADMIN_PROVISIONING=yes`; the operator must type the target database name before anything is written. Secrets are never printed or logged.
+
+- **Startup validation.** In `staging` and `production` the process refuses to start (messages name the setting, never the value) unless: `JWT_SECRET_KEY` is at least 32 random characters and not a placeholder; `JWT_ALGORITHM` is HMAC; `FIELD_ENCRYPTION_KEY` is 64 hex characters and not a repeated pattern; `CORS_ORIGINS` and `REDIS_URL` are set explicitly and CORS origins are explicit `https://` origins (no `*`); `DATABASE_URL` is `postgresql+asyncpg://` and not a dev/test credential; the Firebase credentials file exists. API docs are only served in `development`.
+- **Client IP and proxies.** Uvicorn runs with `--no-proxy-headers`; the app resolves the client IP itself from `TRUSTED_PROXY_HOPS` (default `0`: `X-Forwarded-For` is ignored). With `N > 0` the client is the Nth entry from the right, so entries a client prepends cannot spoof it. The Render documentation reviewed (2026-10) does not state whether it appends to or overwrites a client-supplied `X-Forwarded-For`, nor its hop count (community reports conflict), so the value must be measured on the real deployment (section 17.1) and left at `0` until then; with `0` behind a proxy every user shares one IP for the per-IP limits.
+- **Anti-enumeration (phone path, currently dormant).** A banned number receives the same `send-otp` response as any other and no code is sent. The failed-attempt counter and lockout apply to every phone, registered or not, so `ACCOUNT_LOCKED` does not reveal that an account exists.
+- **Refresh rotation is atomic.** The old session is revoked with a conditional `UPDATE ... WHERE is_revoked = FALSE`; of two concurrent refreshes with one token only one succeeds. A replayed token does not revoke the user's other sessions (that would sign people out on a harmless double-tap); reuse is visible as a rejected refresh.
+- **Photo processing.** Verification and re-encoding run off the event loop on a pool of `PHOTO_PROCESSING_CONCURRENCY` workers (default 1). Each variant is size-checked, magic-byte checked, rejected above `PHOTO_MAX_PIXELS` (default 12 MP, checked from the header before decoding), re-encoded without metadata, and written to a server-owned `profiles/{id}/clean/` path. The client's upload objects are deleted afterwards, so a signed PUT URL that is still valid cannot swap the content after validation or moderation. Any failure deletes every object the call created plus the uploads. Supported formats: JPEG, PNG, WebP (first frame only; ICC profiles are dropped, so wide-gamut photos may look slightly less saturated).
+- **Memory evidence (measured, Windows, Pillow 12.3):** importing the app is about 103 MB; one worst-case 12 MP JPEG adds about 136 MB at peak (about 36 MB per decoded frame, a copy for orientation, input and output buffers). Allowing about 50 MB for Firebase/Redis/DB clients, one worker fits a 512 MB instance with margin (about 290 MB); two concurrent workers (about 430 MB) do not leave safe headroom. Linux numbers differ; re-measure with a real 12 MP photo on the target instance before raising either limit.
+
+**Open policy decisions:** how a future multi-platform deployment derives the platform from a request (host, header, or one deployment per platform); whether `ADMIN` cross-platform read access is ever wanted (currently denied); whether admin photo actions must be written to `audit_logs` once that table exists.
+
 ---
 
 ## 8. Data Privacy
@@ -635,6 +657,29 @@ graph LR
 ```
 
 Observability (logging/Sentry/uptime) unchanged from v1.0.
+
+### 12.1 CI Quality Gates (backend)
+
+The pipeline (`.github/workflows/ci.yml`) is designed so that test results can never be hidden by lint debt, and so that each check says truthfully what it covers. `backend/tests/unit/test_ci_workflow.py` fails if these properties are edited away.
+
+| Job | Mandatory | What it enforces |
+|---|---|---|
+| `backend-test` (PostgreSQL) | **Yes**, depends on nothing | Fresh PostgreSQL 16 service, `scripts/migrate.py`, then the full suite with `REQUIRE_POSTGRES_TESTS=1`. `test_database_dialect.py` proves the dialect is PostgreSQL and the database is at the Alembic head; `ci_quality.py junit` then fails the job on **any skipped test** or an empty report, so a SQLite fallback or a missing database cannot pass. The JUnit/coverage reports are uploaded (7 days). |
+| `backend-lint-gate` | **Yes** | Ruff lint and format **ratchets** (below). |
+| `backend-dependency-audit` | **Yes** | `pip-audit --strict --no-deps -r <pinned list>`, where the list is `pip freeze --all --exclude-editable` of the installed environment. `--strict` makes any dependency that cannot be collected or audited **fail** the job (without it pip-audit only warns and exits 0). The editable project is left out of the list rather than passed with `--skip-editable`, because `--strict` turns pip-audit's "skipped: editable" report into an error. An empty or implausible list, or a package that is not an exact pin, also fails. Any known vulnerability fails the job unless it is listed in `backend/pip-audit-ignore.txt` with a valid advisory id, a specific reason (20+ characters) and an expiry (at most 120 days; an expired, malformed or duplicate entry fails CI). `--ignore-vuln` matches the advisory id or any of its aliases (verified in pip-audit's source). No `continue-on-error`. |
+| `backend-typecheck` (mypy) | **Advisory** | Runs and reports, but cannot fail the workflow: `mypy --strict` has never been run clean on this codebase, so there is no baseline yet. It is the only job allowed `continue-on-error` (enforced by a test). |
+| `backend-build` | On `main` | Waits for the three mandatory backend jobs; builds the image, never pushes it. |
+
+**Lint ratchet.** `ruff-baseline.json` records every pre-existing Ruff violation keyed by (file, rule, content of the offending line) with a count. `python scripts/ci_quality.py lint` fails on any violation not in the baseline (a new file, a new rule hit, a second copy of the same line, or an edited line that still violates) and on baseline entries that no longer occur, so debt only shrinks and a fixed violation cannot be re-introduced unnoticed. Line-number shifts and CRLF/LF differences do not matter. Policy: touch a violating line and you fix it. Regenerate with `--update`; the diff must only remove entries. No rule is disabled globally.
+
+**Format ratchet.** `ruff-format-baseline.txt` lists the files that were not `ruff format` clean when the ratchet was introduced. Every other Python file must be clean, so new and previously formatted files stay formatted. Format a file, then run `python scripts/ci_quality.py format --update` to remove it from the list. The whole repository is never reformatted in one go.
+
+**Reproducibility.** Ruff is bounded (`>=0.16.2,<0.17`) because the baselines depend on its rule set. `pyproject.toml` declares `packages.find include = ["app*"]`; without it setuptools aborts `pip install -e .` on this flat layout (`app/`, `alembic/`, `nginx/`), which fails every CI job at the install step. There is no dependency lockfile yet, so `pip-audit` and the test environment resolve the newest compatible versions on each run.
+
+**Fork and secret safety.** Workflows run on `push` and `pull_request` only (never `pull_request_target`), with `permissions: contents: read`, `persist-credentials: false` on every checkout, and no use of `secrets.` anywhere; the database credentials in the file are throwaway values for the CI service container. Duplicate pull-request runs are cancelled, and every job has a timeout. Actions are pinned to major-version tags, not commit SHAs (existing project policy); pinning to SHAs would harden the supply chain further.
+
+**Operator steps outside the repository:** mark `backend-test`, `backend-lint-gate` and `backend-dependency-audit` as *required status checks* on the protected branch (the workflow cannot enforce that), and keep Dependabot or a scheduled run in mind: a new advisory can fail the audit without any code change.
+
 
 ---
 
@@ -725,6 +770,38 @@ graph TB
 - **Domain routing:** single domain, path-based split (`/api/*` vs static web app) — avoids needing separate subdomains/CORS complexity for v1.
 - **Backups:** automated nightly `pg_dump` (or managed-provider automatic backups if using a hosted Postgres), retained 30 days rolling, stored off the API host (separate storage bucket). **Restore process documented and tested at least once before go-live** — an untested backup is not a real backup.
 - **Disaster recovery:** RPO target of 24 hours (nightly backup), RTO target documented once hosting provider is finalized — this is a placeholder that must be filled in with real numbers before production launch, not left as "we have backups."
+
+### 17.1 Operations Runbook (production readiness)
+
+**Required configuration** (all validated at startup, see section 7.9): `ENVIRONMENT`, `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET_KEY`, `FIELD_ENCRYPTION_KEY`, `FIREBASE_CREDENTIALS_PATH`, `FIREBASE_STORAGE_BUCKET`, `CORS_ORIGINS` (JSON list of https origins), `PLATFORM_ID`, the three Razorpay values (placeholders are accepted while payments are deferred), and optionally `SENTRY_DSN`, `TRUSTED_PROXY_HOPS`, `PHOTO_*`, `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`. Secrets live only in the host's secret store; the Firebase service-account file is mounted as a secret file (for example Render "Secret Files" at `/etc/secrets/firebase.json`), never copied into the image (`backend/.dockerignore` excludes `.env` and `*.json`).
+
+**Operator checks that cannot be done from the repository** (the repo contains no Storage rules, `firebase.json` or CORS file):
+1. Bucket: public access prevention enforced; uniform bucket-level access on; no `allUsers` / `allAuthenticatedUsers` in IAM; bucket in the intended region.
+2. Firebase Storage Security Rules: deny all client reads and writes (all access goes through signed URLs).
+3. Bucket CORS allows `PUT` (and `GET`) with the `Content-Type` and `x-goog-content-length-range` headers from the web origin only; otherwise Flutter Web uploads fail.
+4. Service account has only Storage object permissions on this bucket; the key is rotated if it was ever committed or shared.
+5. Lifecycle rule on prefix `profiles/` for objects older than 2 days that are not under `profiles/*/clean/` (abandoned upload sessions leave objects the API never sees).
+6. Budget alerts configured (the billing plan must allow Storage; see the Phase A cost report).
+7. Trusted-proxy measurement: deploy with `TRUSTED_PROXY_HOPS=0`, call an endpoint that echoes the resolved client IP in logs with a fake `X-Forwarded-For: 6.6.6.6` header from a known IP, and count the entries the platform adds; set `TRUSTED_PROXY_HOPS` to that count only if the real client IP is the Nth entry from the right.
+
+**Container:** non-root `appuser`; build context excludes secrets, tests and dev scripts; health check requires HTTP 200 from `/health`; `/health` is a liveness probe only and reports nothing about configuration (it does not check the database, so a database outage does not restart the service); SIGTERM triggers a graceful stop (25 s); one worker. The APScheduler jobs are not implemented yet; before running more than one instance add the advisory lock from section 3.7.
+
+**Backup (nightly) and restore:**
+```
+# backup (custom format, compressed); run from a trusted host with network access to the database
+pg_dump "$DATABASE_URL_SYNC" -Fc -f divyang-$(date +%F).dump
+# restore into a NEW empty database, never over the live one
+createdb divyang_restore
+pg_restore --no-owner --exit-on-error -d divyang_restore divyang-YYYY-MM-DD.dump
+# verify: alembic_version, row counts of users/profiles/sensitive_profile_data, index and constraint counts
+```
+Rehearsed on a disposable PostgreSQL 16 container (`test_rehearsal` dumped, restored to `test_restore_check`): `pg_dump` and `pg_restore` exited 0 and the alembic version (`0003`), row counts, 29 indexes and 29 constraints matched, including the encrypted column value. Store dumps off the API host and encrypt them (they contain PII and ciphertext); keep `FIELD_ENCRYPTION_KEY` and `JWT_SECRET_KEY` in a separate secret manager, because without the encryption key restored sensitive columns are unreadable.
+
+**Migrations and rollback:** migrations run as their own deploy step (`scripts/migrate.py`), before the new image starts. Rehearsed on a disposable database: `upgrade head`, `downgrade base`, `upgrade head` all exit 0. Roll back the application by redeploying the previous image tag; roll back the schema only with a tested `alembic downgrade` for that release, after a fresh dump. `alembic check` currently reports drift between the ORM models and the migrations (column comments, partial and GIN indexes that exist only in migrations, one foreign key); the database matches the migrations, so this is not a data risk, but `alembic check` cannot be used as a CI gate until the models are brought in line.
+
+**Connection pool:** `DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=10`, `pool_pre_ping`, `pool_recycle=1800s`, 30 s pool timeout, one worker; this stays well under the 100-connection limit of the small managed Postgres plans.
+
+**Known gaps (not implemented):** persistent `audit_logs` for admin photo actions (the table and enum are in Database.md section 3.16 but there is no migration; admin actions are only in structured logs); a scheduled cleanup of abandoned upload sessions (the bucket lifecycle rule above is the interim control); a general per-endpoint rate limiter (section 7.2 `RateLimitMiddleware` is a TODO; only the auth endpoints are limited); Sentry is a dependency but is not initialized.
 
 ---
 

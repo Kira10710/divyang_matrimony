@@ -9,9 +9,9 @@ Architecture §7.7.
 """
 import uuid
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.active_session import ActiveSession
@@ -49,6 +49,11 @@ class ISessionRepository(ABC):
         ...
 
     @abstractmethod
+    async def revoke_if_active(self, session: ActiveSession) -> bool:
+        """Atomically revoke a session; True only for the caller that actually flipped it."""
+        ...
+
+    @abstractmethod
     async def revoke_all_sessions(self, user_id: uuid.UUID) -> int:
         """Revoke all non-expired sessions for a user (logout-all)."""
         ...
@@ -77,6 +82,23 @@ class ISessionRepository(ABC):
         platform_id: str,
     ) -> LoginHistory:
         """Append an immutable login event row."""
+        ...
+
+    @abstractmethod
+    async def count_recent_failures(
+        self,
+        user_id: uuid.UUID,
+        *,
+        since_minutes: int = 15,
+    ) -> int:
+        """
+        Count LOGIN_FAILED events for *user_id* within the last
+        *since_minutes* minutes (sliding window).
+
+        Used to implement persistent admin-login lockout without Redis:
+        the same login_history table that already records failures is
+        queried here, so no extra storage is needed.
+        """
         ...
 
 
@@ -133,6 +155,21 @@ class SessionRepository(ISessionRepository):
         session.is_revoked = True
         session.revoked_at = now
         await self.db.flush()
+
+    async def revoke_if_active(self, session: ActiveSession) -> bool:
+        """Conditional UPDATE ... WHERE is_revoked = FALSE; one winner per session."""
+        now = datetime.now(UTC)
+        result = await self.db.execute(
+            update(ActiveSession)
+            .where(and_(ActiveSession.id == session.id, ActiveSession.is_revoked.is_(False)))
+            .values(is_revoked=True, revoked_at=now)
+        )
+        await self.db.flush()
+        if result.rowcount == 1:  # type: ignore[attr-defined]
+            session.is_revoked = True
+            session.revoked_at = now
+            return True
+        return False
 
     async def revoke_all_sessions(self, user_id: uuid.UUID) -> int:
         """
@@ -213,3 +250,24 @@ class SessionRepository(ISessionRepository):
         self.db.add(entry)
         await self.db.flush()
         return entry
+
+    async def count_recent_failures(
+        self,
+        user_id: uuid.UUID,
+        *,
+        since_minutes: int = 15,
+    ) -> int:
+        """Count LOGIN_FAILED events for *user_id* in the last *since_minutes* minutes."""
+        since = datetime.now(UTC) - timedelta(minutes=since_minutes)
+        result = await self.db.execute(
+            select(func.count())
+            .select_from(LoginHistory)
+            .where(
+                and_(
+                    LoginHistory.user_id == user_id,
+                    LoginHistory.event_type == LoginEventTypeEnum.LOGIN_FAILED,
+                    LoginHistory.created_at >= since,
+                )
+            )
+        )
+        return result.scalar_one()
