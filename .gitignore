@@ -20,6 +20,9 @@ credentials.json
 *.key
 *.p12
 *.pfx
+/backend/firebase.json
+*-key.json
+*_key.json
 
 # ==============================
 # Python / FastAPI
@@ -33,6 +36,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+coverage.xml
+test-results.xml
 htmlcov/
 *.egg-info/
 dist/
@@ -74,6 +79,9 @@ coverage/
 *.db
 *.dump
 *.sql.gz
+dump.sql
+*_dump.sql
+*-dump.sql
 
 # ==============================
 # Logs and temporary files
@@ -110,3 +118,7 @@ Desktop.ini
 # ==============================
 !.env.example
 !.env.*.example
+# ==============================
+# Backups
+# ==============================
+.git.backup/
