@@ -36,8 +36,11 @@ USER appuser
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health')" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import sys, httpx; sys.exit(0 if httpx.get('http://localhost:8000/health', timeout=4).status_code == 200 else 1)"
 
 # Run with uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Forwarded headers are NOT trusted by uvicorn; the app resolves the client IP itself from
+# TRUSTED_PROXY_HOPS (see app/core/dependencies.py). SIGTERM triggers a graceful stop.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", \
+     "--no-proxy-headers", "--no-server-header", "--timeout-graceful-shutdown", "25"]

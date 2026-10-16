@@ -68,7 +68,14 @@ async def update_preferences(
     result = await pref_svc.create_or_update(
         profile_id, current_user.platform_id, body
     )
+    
+    # Recalculate and persist completeness score
+    new_score = await profile_svc.recalculate_completeness(profile_id)
+    
+    data = result.model_dump(mode="json")
+    data["completeness_score"] = new_score
+
     return success_response(
-        data=result.model_dump(mode="json"),
+        data=data,
         message="Partner preferences updated",
     )

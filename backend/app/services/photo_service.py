@@ -20,16 +20,21 @@ See Architecture §4.2, Database.md §3.4, §6.
 """
 from __future__ import annotations
 
+import asyncio
+import io
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import structlog
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import settings
 from app.core.exceptions import (
     BadRequestError,
     ForbiddenError,
     NotFoundError,
+    ServiceUnavailableError,
 )
 from app.models.enums import ModerationStatusEnum, VisibilityTier
 from app.models.profile_photo import ProfilePhoto
@@ -37,6 +42,24 @@ from app.repositories.photo_repository import MAX_PHOTOS_PER_PROFILE, IPhotoRepo
 from app.schemas.photo import PhotoListOut, PhotoOut, PhotoRegisterRequest, SignedPhotoUrls, UploadSessionOut
 
 logger = structlog.get_logger(__name__)
+
+# Formats we re-encode (stripping metadata) and the content type we store them as.
+_REENCODE_FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}
+_EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+
+# Image decoding is CPU- and memory-heavy and the storage client is blocking, so it runs on a
+# small dedicated pool (PHOTO_PROCESSING_CONCURRENCY) instead of on the event loop. The pool size
+# is the memory bound: at most that many images are decoded at the same time.
+_image_executor: ThreadPoolExecutor | None = None
+
+
+def _get_image_executor() -> ThreadPoolExecutor:
+    global _image_executor
+    if _image_executor is None:
+        _image_executor = ThreadPoolExecutor(
+            max_workers=settings.PHOTO_PROCESSING_CONCURRENCY, thread_name_prefix="photo-img"
+        )
+    return _image_executor
 
 # Default TTL for signed read URLs — configurable via settings.
 _SIGNED_URL_TTL_SECONDS: int = getattr(settings, "PHOTO_SIGNED_URL_TTL_SECONDS", 900)
@@ -103,13 +126,15 @@ class PhotoService:
         }
 
         ttl = timedelta(minutes=15)
+        max_bytes = settings.PHOTO_MAX_SIZE_MB * 1024 * 1024
+        headers = {"x-goog-content-length-range": f"0,{max_bytes}"}
         
-        original_url = self._signed_url(paths["original"], ttl, method="PUT")
-        medium_url = self._signed_url(paths["medium"], ttl, method="PUT")
-        thumbnail_url = self._signed_url(paths["thumbnail"], ttl, method="PUT")
+        original_url = self._signed_url(paths["original"], ttl, method="PUT", headers=headers)
+        medium_url = self._signed_url(paths["medium"], ttl, method="PUT", headers=headers)
+        thumbnail_url = self._signed_url(paths["thumbnail"], ttl, method="PUT", headers=headers)
         
         if not original_url or not medium_url or not thumbnail_url:
-            raise RuntimeError("Failed to generate upload URLs.")
+            raise ServiceUnavailableError("Failed to generate upload URLs due to a storage configuration error.")
 
         return UploadSessionOut(
             urls=UploadSessionOut.UploadUrls(
@@ -121,8 +146,137 @@ class PhotoService:
                 storage_path=paths["original"],
                 medium_path=paths["medium"],
                 thumbnail_path=paths["thumbnail"],
-            )
+            ),
+            max_bytes=max_bytes,
         )
+
+    def _verify_and_clean_variants(
+        self,
+        profile_id: uuid.UUID,
+        upload_paths: tuple[str, str, str],
+        photo_key: str,
+    ) -> tuple[str, str, str]:
+        """Blocking worker (runs on the image executor). Returns the final object paths.
+
+        For each variant: confirm the object is inside this profile's folder, exists, is
+        within the size limit and is a real image; strip all metadata; write the clean copy to
+        `profiles/{id}/clean/...`. Only when all three succeed are the client-writable upload
+        objects removed. On any failure every object this call created, and the uploads, are
+        deleted so nothing half-processed stays in the bucket.
+        """
+        bucket = self._bucket_factory()
+        prefix = f"profiles/{profile_id}/"
+        server_owned = f"{prefix}clean/"
+        max_bytes = settings.PHOTO_MAX_SIZE_MB * 1024 * 1024
+        created: list[str] = []
+        # Only objects in this profile's folder that a signed PUT URL could have produced are
+        # ours to touch. `clean/` holds already-published photos; registering one of those as an
+        # "upload" would delete a live photo when the upload objects are cleaned up.
+        deletable = [p for p in upload_paths if p.startswith(prefix) and not p.startswith(server_owned)]
+        try:
+            for name, path in zip(("original", "medium", "thumbnail"), upload_paths, strict=True):
+                if not path.startswith(prefix) or path.startswith(server_owned):
+                    raise BadRequestError(f"Invalid storage path: {path}")
+                blob = bucket.blob(path)
+                if not blob.exists():
+                    raise BadRequestError(f"File not found in storage: {path}")
+                blob.reload()
+                if blob.size is None:
+                    raise BadRequestError(f"Could not verify size for {path}")
+                if blob.size == 0:
+                    raise BadRequestError(f"File {path} is empty or unreadable.")
+                if blob.size > max_bytes:
+                    raise BadRequestError(f"File {path} exceeds maximum allowed size.")
+                try:
+                    raw = blob.download_as_bytes()
+                except Exception as exc:
+                    logger.warning("photo.download_failed", object_path=path, error=str(exc))
+                    raise BadRequestError(f"Could not read file {path}") from exc
+                if len(raw) > max_bytes:
+                    raise BadRequestError(f"File {path} exceeds maximum allowed size.")
+                self._validate_image_bytes(raw[:32], path)
+                clean, content_type = self._strip_metadata(raw, path)
+                del raw
+                final_path = f"{prefix}clean/{photo_key}_{name}.{_EXTENSIONS[content_type]}"
+                # Recorded before the write so a half-finished upload is cleaned up too.
+                created.append(final_path)
+                bucket.blob(final_path).upload_from_string(clean, content_type=content_type)
+                del clean
+        except BadRequestError:
+            self._delete_objects_best_effort(bucket, (*created, *deletable))
+            raise
+        except Exception as exc:
+            self._delete_objects_best_effort(bucket, (*created, *deletable))
+            logger.error("photo.verification_failed", error=str(exc))
+            raise BadRequestError("Could not verify uploaded files.") from exc
+
+        self._delete_objects_best_effort(bucket, deletable)
+        return created[0], created[1], created[2]
+
+    @staticmethod
+    def _delete_objects_best_effort(bucket, paths) -> None:
+        """Delete objects, logging (never raising) failures so the original error survives."""
+        for path in paths:
+            try:
+                bucket.blob(path).delete()
+            except Exception as exc:
+                logger.warning("photo.object_cleanup_failed", object_path=path, error=str(exc))
+
+    @staticmethod
+    def _strip_metadata(raw: bytes, object_path: str) -> tuple[bytes, str]:
+        """Re-encode an image without EXIF/GPS/XMP/ICC metadata (Architecture §4.2).
+
+        The client strips metadata too, but it cannot be trusted. Orientation is
+        applied to the pixels first so photos do not rotate. Fails closed: if the
+        result still carries metadata, or the image is oversized/corrupt, the
+        upload is rejected. Returns (clean_bytes, content_type).
+        """
+        bad = BadRequestError(f"File {object_path} is not a valid or supported image.")
+        try:
+            with Image.open(io.BytesIO(raw)) as img:
+                fmt = img.format
+                if fmt not in _REENCODE_FORMATS:
+                    raise bad
+                width, height = img.size
+                if width * height > settings.PHOTO_MAX_PIXELS:
+                    raise BadRequestError(f"File {object_path} has too many pixels.")
+                img.load()
+                pixels = ImageOps.exif_transpose(img)
+                out = io.BytesIO()
+                if fmt == "JPEG":
+                    if pixels.mode not in ("RGB", "L"):
+                        pixels = pixels.convert("RGB")
+                    pixels.save(out, "JPEG", quality=90, optimize=True, exif=b"")
+                elif fmt == "PNG":
+                    pixels.save(out, "PNG", optimize=True)
+                else:
+                    pixels.save(out, "WEBP", quality=90, exif=b"", xmp=b"")
+            clean = out.getvalue()
+            with Image.open(io.BytesIO(clean)) as check:
+                leaked = len(check.getexif()) > 0 or any(
+                    key in check.info for key in ("exif", "xmp", "XML:com.adobe.xmp", "icc_profile")
+                )
+            if leaked:
+                raise BadRequestError(f"File {object_path} still contains metadata after cleaning.")
+            return clean, _REENCODE_FORMATS[fmt]
+        except BadRequestError:
+            raise
+        except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError, SyntaxError) as exc:
+            raise bad from exc
+
+    @staticmethod
+    def _validate_image_bytes(header: bytes, object_path: str) -> str:
+        """
+        Validate image format using actual binary magic bytes (not just extension/MIME).
+        Supported formats: JPEG, PNG, WebP.
+        """
+        if len(header) >= 3 and header.startswith(b"\xff\xd8\xff"):
+            return "jpeg"
+        if len(header) >= 8 and header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "png"
+        if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+            return "webp"
+        raise BadRequestError(f"File {object_path} is not a valid JPEG, PNG, or WebP image.")
 
     async def register_photo(
         self,
@@ -151,33 +305,34 @@ class PhotoService:
                 "Delete an existing photo before uploading a new one."
             )
             
-        # Verify that the objects actually exist in the bucket.
-        # This prevents a malicious client from registering arbitrary paths
-        # or registering paths before they've finished uploading.
-        try:
-            bucket = self._bucket_factory()
-            for p in (data.storage_path, data.medium_path, data.thumbnail_path):
-                if not p.startswith(f"profiles/{profile_id}/"):
-                    raise BadRequestError(f"Invalid storage path: {p}")
-                blob = bucket.blob(p)
-                if not blob.exists():
-                    raise BadRequestError(f"File not found in storage: {p}")
-        except BadRequestError:
-            raise
-        except Exception as e:
-            logger.error("photo.verification_failed", error=str(e))
-            raise BadRequestError("Could not verify uploaded files.")
+        # Verify, clean and re-publish the three variants off the event loop. The cleaned
+        # copies go to server-owned paths that no client-held signed PUT URL can write to,
+        # so an uploader cannot swap the content after validation or moderation.
+        variant_paths = (data.storage_path, data.medium_path, data.thumbnail_path)
+        photo_key = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+        original_path, medium_path, thumbnail_path = await loop.run_in_executor(
+            _get_image_executor(),
+            self._verify_and_clean_variants,
+            profile_id,
+            variant_paths,
+            photo_key,
+        )
 
         photo = ProfilePhoto(
             profile_id=profile_id,
-            storage_path=data.storage_path,
-            medium_path=data.medium_path,
-            thumbnail_path=data.thumbnail_path,
+            storage_path=original_path,
+            medium_path=medium_path,
+            thumbnail_path=thumbnail_path,
             display_order=data.display_order,
             is_primary=False,  # Never set primary on upload; always pending moderation
             moderation_status=ModerationStatusEnum.PENDING,
         )
-        photo = await self._repo.create(photo)
+        try:
+            photo = await self._repo.create(photo)
+        except Exception:
+            self._delete_objects_best_effort(self._bucket_factory(), (original_path, medium_path, thumbnail_path))
+            raise
 
         logger.info(
             "photo.registered",
@@ -285,6 +440,8 @@ class PhotoService:
         deleted = await self._repo.delete(photo_id)
         if not deleted:
             raise NotFoundError("Photo not found")
+        if photo.is_primary:
+            await self._repo.promote_next_primary(profile_id)
 
         # Delete Firebase Storage objects best-effort.
         self._delete_firebase_objects_best_effort(photo)
@@ -311,28 +468,42 @@ class PhotoService:
     # Admin API
     # ------------------------------------------------------------------
 
-    async def get_moderation_queue(self, limit: int = 50, offset: int = 0) -> PhotoListOut:
-        """Admin only: get queue of pending photos."""
-        photos = await self._repo.get_pending_photos(limit, offset)
+    async def get_moderation_queue(
+        self, limit: int = 50, offset: int = 0, *, platform_scope: str | None
+    ) -> PhotoListOut:
+        """Admin only: queue of pending photos.
+
+        platform_scope is required: a platform id limits the queue to that
+        platform, None (SUPER_ADMIN only) means all platforms.
+        """
+        photos = await self._repo.get_pending_photos(limit, offset, platform_id=platform_scope)
         out = [
             self._build_response(p, VisibilityTier.PRIVATE, include_pending=True)
             for p in photos
         ]
         return PhotoListOut(photos=out, total=len(out))
 
-    async def approve_photo(self, photo_id: uuid.UUID) -> PhotoOut:
-        """Admin only: approve a photo."""
-        photo = await self._repo.update_moderation(photo_id, ModerationStatusEnum.APPROVED)
+    async def approve_photo(self, photo_id: uuid.UUID, *, platform_scope: str | None) -> PhotoOut:
+        """Admin only: approve a photo (404 if outside the admin's platform scope)."""
+        photo = await self._repo.update_moderation(
+            photo_id, ModerationStatusEnum.APPROVED, platform_id=platform_scope
+        )
         if not photo:
             raise NotFoundError("Photo not found")
         logger.info("photo.approved", photo_id=str(photo_id))
         return self._build_response(photo, VisibilityTier.PRIVATE)
 
-    async def reject_photo(self, photo_id: uuid.UUID, reason: str) -> PhotoOut:
-        """Admin only: reject a photo with a reason."""
-        photo = await self._repo.update_moderation(photo_id, ModerationStatusEnum.REJECTED, reason)
+    async def reject_photo(
+        self, photo_id: uuid.UUID, reason: str, *, platform_scope: str | None
+    ) -> PhotoOut:
+        """Admin only: reject a photo (404 if outside the admin's platform scope)."""
+        photo = await self._repo.update_moderation(
+            photo_id, ModerationStatusEnum.REJECTED, reason, platform_id=platform_scope
+        )
         if not photo:
             raise NotFoundError("Photo not found")
+        # A rejected photo can no longer be primary; keep the profile consistent.
+        await self._repo.promote_next_primary(photo.profile_id)
         logger.info("photo.rejected", photo_id=str(photo_id), reason=reason)
         return self._build_response(photo, VisibilityTier.PRIVATE)
 
@@ -399,7 +570,7 @@ class PhotoService:
             signed_urls=signed,
         )
 
-    def _signed_url(self, object_path: str, ttl: timedelta, method: str = "GET") -> str:
+    def _signed_url(self, object_path: str, ttl: timedelta, method: str = "GET", headers: dict[str, str] | None = None) -> str:
         """Generate a short-lived signed URL for a Firebase Storage object."""
         try:
             bucket = self._bucket_factory()
@@ -412,6 +583,9 @@ class PhotoService:
                 "credentials": credentials,
                 "version": "v4",
             }
+            if headers:
+                kwargs["headers"] = headers
+
             if method == "PUT":
                 kwargs["content_type"] = "image/jpeg"
                 
@@ -422,9 +596,10 @@ class PhotoService:
                 object_path=object_path,
                 error=str(exc),
             )
-            # Return empty string rather than crashing the whole response —
-            # the client can retry or display a placeholder.
-            return ""
+            # Never hand the client an empty/invalid URL as if signing worked.
+            raise ServiceUnavailableError(
+                "Photo storage is temporarily unavailable. Please try again shortly."
+            ) from exc
 
     def _delete_firebase_objects_best_effort(self, photo: ProfilePhoto) -> None:
         """Delete the three Firebase Storage objects for a photo (best-effort)."""

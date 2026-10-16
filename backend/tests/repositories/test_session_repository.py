@@ -27,8 +27,9 @@ def _past(days: int = 1) -> datetime:
 
 
 class TestCreateSession:
-    async def test_creates_and_returns_the_session(self, db_session: AsyncSession) -> None:
-        user_id = uuid.uuid4()
+    async def test_creates_and_returns_the_session(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         jti = str(uuid.uuid4())
 
         session = await SessionRepository(db_session).create_session(
@@ -49,12 +50,13 @@ class TestCreateSession:
 
 class TestGetSessionByJti:
     async def test_finds_an_existing_session(
-        self, db_session_factory: async_sessionmaker[AsyncSession]
+        self, db_session_factory: async_sessionmaker[AsyncSession], make_user
     ) -> None:
+        user = await make_user()
         jti = str(uuid.uuid4())
         async with db_session_factory() as session:
             await SessionRepository(session).create_session(
-                user_id=uuid.uuid4(),
+                user_id=user.id,
                 refresh_token_jti=jti,
                 expires_at=_future(),
                 device_info=None,
@@ -74,10 +76,11 @@ class TestGetSessionByJti:
 
 
 class TestRevokeSession:
-    async def test_marks_revoked_with_a_timestamp(self, db_session: AsyncSession) -> None:
+    async def test_marks_revoked_with_a_timestamp(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
         repo = SessionRepository(db_session)
         session = await repo.create_session(
-            user_id=uuid.uuid4(),
+            user_id=user.id,
             refresh_token_jti=str(uuid.uuid4()),
             expires_at=_future(),
             device_info=None,
@@ -93,10 +96,12 @@ class TestRevokeSession:
 
 class TestRevokeAllSessions:
     async def test_revokes_only_that_users_active_sessions(
-        self, db_session_factory: async_sessionmaker[AsyncSession]
+        self, db_session_factory: async_sessionmaker[AsyncSession], make_user
     ) -> None:
-        user_id = uuid.uuid4()
-        other_user_id = uuid.uuid4()
+        user_1 = await make_user()
+        user_2 = await make_user()
+        user_id = user_1.id
+        other_user_id = user_2.id
 
         async with db_session_factory() as session:
             repo = SessionRepository(session)
@@ -138,9 +143,10 @@ class TestRevokeAllSessions:
             assert len(await repo.list_active_sessions(other_user_id)) == 1
 
     async def test_does_not_touch_already_revoked_sessions(
-        self, db_session_factory: async_sessionmaker[AsyncSession]
+        self, db_session_factory: async_sessionmaker[AsyncSession], make_user
     ) -> None:
-        user_id = uuid.uuid4()
+        user = await make_user()
+        user_id = user.id
         async with db_session_factory() as session:
             repo = SessionRepository(session)
             already_revoked = await repo.create_session(
@@ -160,9 +166,10 @@ class TestRevokeAllSessions:
         assert revoked_count == 0
 
     async def test_expired_sessions_are_not_counted(
-        self, db_session_factory: async_sessionmaker[AsyncSession]
+        self, db_session_factory: async_sessionmaker[AsyncSession], make_user
     ) -> None:
-        user_id = uuid.uuid4()
+        user = await make_user()
+        user_id = user.id
         async with db_session_factory() as session:
             await SessionRepository(session).create_session(
                 user_id=user_id,
@@ -181,9 +188,10 @@ class TestRevokeAllSessions:
 
 
 class TestListActiveSessions:
-    async def test_excludes_revoked_sessions(self, db_session: AsyncSession) -> None:
+    async def test_excludes_revoked_sessions(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         repo = SessionRepository(db_session)
-        user_id = uuid.uuid4()
         revoked = await repo.create_session(
             user_id=user_id,
             refresh_token_jti=str(uuid.uuid4()),
@@ -207,9 +215,10 @@ class TestListActiveSessions:
         assert len(active) == 1
         assert active[0].is_revoked is False
 
-    async def test_excludes_expired_sessions(self, db_session: AsyncSession) -> None:
+    async def test_excludes_expired_sessions(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         repo = SessionRepository(db_session)
-        user_id = uuid.uuid4()
         await repo.create_session(
             user_id=user_id,
             refresh_token_jti=str(uuid.uuid4()),
@@ -221,9 +230,10 @@ class TestListActiveSessions:
 
         assert await repo.list_active_sessions(user_id) == []
 
-    async def test_orders_newest_first(self, db_session: AsyncSession) -> None:
+    async def test_orders_newest_first(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         repo = SessionRepository(db_session)
-        user_id = uuid.uuid4()
         older = await repo.create_session(
             user_id=user_id,
             refresh_token_jti=str(uuid.uuid4()),
@@ -249,10 +259,12 @@ class TestListActiveSessions:
 
 
 class TestTouchSession:
-    async def test_updates_last_used_at(self, db_session: AsyncSession) -> None:
+    async def test_updates_last_used_at(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         repo = SessionRepository(db_session)
         session = await repo.create_session(
-            user_id=uuid.uuid4(),
+            user_id=user_id,
             refresh_token_jti=str(uuid.uuid4()),
             expires_at=_future(),
             device_info=None,
@@ -267,9 +279,10 @@ class TestTouchSession:
 
 
 class TestLogEvent:
-    async def test_appends_a_login_history_row(self, db_session: AsyncSession) -> None:
+    async def test_appends_a_login_history_row(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         repo = SessionRepository(db_session)
-        user_id = uuid.uuid4()
 
         entry = await repo.log_event(
             user_id=user_id,
@@ -287,9 +300,11 @@ class TestLogEvent:
         assert entry.event_type == LoginEventTypeEnum.LOGIN_SUCCESS
         assert entry.is_suspicious is False
 
-    async def test_records_a_suspicious_login(self, db_session: AsyncSession) -> None:
+    async def test_records_a_suspicious_login(self, db_session: AsyncSession, make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         entry = await SessionRepository(db_session).log_event(
-            user_id=uuid.uuid4(),
+            user_id=user_id,
             event_type=LoginEventTypeEnum.LOGIN_SUCCESS,
             ip_address=None,
             user_agent=None,
@@ -305,8 +320,9 @@ class TestLogEvent:
 class TestSessionLifecycle:
     """A full create → list → revoke → list journey, in one place."""
 
-    async def test_full_lifecycle(self, db_session_factory: async_sessionmaker[AsyncSession]) -> None:
-        user_id = uuid.uuid4()
+    async def test_full_lifecycle(self, db_session_factory: async_sessionmaker[AsyncSession], make_user) -> None:
+        user = await make_user()
+        user_id = user.id
         jti = str(uuid.uuid4())
 
         async with db_session_factory() as session:
@@ -333,3 +349,63 @@ class TestSessionLifecycle:
 
         async with db_session_factory() as session:
             assert await SessionRepository(session).list_active_sessions(user_id) == []
+
+
+class TestCountRecentFailures:
+    async def test_counts_only_failed_logins_for_target_user_in_window(
+        self, db_session: AsyncSession, make_user
+    ) -> None:
+        user = await make_user()
+        other_user = await make_user()
+        repo = SessionRepository(db_session)
+
+        # Log two failures for user
+        await repo.log_event(
+            user_id=user.id,
+            event_type=LoginEventTypeEnum.LOGIN_FAILED,
+            ip_address="127.0.0.1",
+            user_agent="pytest",
+            device_info="Test",
+            refresh_token_jti=None,
+            is_suspicious=False,
+            platform_id=PLATFORM,
+        )
+        await repo.log_event(
+            user_id=user.id,
+            event_type=LoginEventTypeEnum.LOGIN_FAILED,
+            ip_address="127.0.0.1",
+            user_agent="pytest",
+            device_info="Test",
+            refresh_token_jti=None,
+            is_suspicious=False,
+            platform_id=PLATFORM,
+        )
+        # Log a success for user (should not be counted)
+        await repo.log_event(
+            user_id=user.id,
+            event_type=LoginEventTypeEnum.LOGIN_SUCCESS,
+            ip_address="127.0.0.1",
+            user_agent="pytest",
+            device_info="Test",
+            refresh_token_jti=None,
+            is_suspicious=False,
+            platform_id=PLATFORM,
+        )
+        # Log a failure for other_user (should not be counted)
+        await repo.log_event(
+            user_id=other_user.id,
+            event_type=LoginEventTypeEnum.LOGIN_FAILED,
+            ip_address="127.0.0.1",
+            user_agent="pytest",
+            device_info="Test",
+            refresh_token_jti=None,
+            is_suspicious=False,
+            platform_id=PLATFORM,
+        )
+
+        count = await repo.count_recent_failures(user.id, since_minutes=15)
+        assert count == 2
+
+        count_other = await repo.count_recent_failures(other_user.id, since_minutes=15)
+        assert count_other == 1
+

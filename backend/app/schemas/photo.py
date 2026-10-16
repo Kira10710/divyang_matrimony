@@ -100,6 +100,7 @@ class UploadSessionOut(BaseModel):
         
     urls: UploadUrls
     paths: UploadPaths
+    max_bytes: int = Field(description="Maximum allowed upload size in bytes for each variant.")
 
 # --------------------------------------------------------------------------
 # Response schemas

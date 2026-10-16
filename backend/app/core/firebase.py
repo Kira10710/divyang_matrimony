@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import firebase_admin
 import structlog
+import os
 from firebase_admin import credentials, storage
 from google.oauth2 import service_account
 
 from app.core.config import settings
+from app.core.exceptions import ServiceUnavailableError
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +38,10 @@ def _init_firebase() -> firebase_admin.App:
     global _firebase_app
     if _firebase_app is not None:
         return _firebase_app
+
+    if not os.path.isfile(settings.FIREBASE_CREDENTIALS_PATH):
+        logger.error("firebase.credentials_missing", path=settings.FIREBASE_CREDENTIALS_PATH)
+        raise ServiceUnavailableError("Firebase storage is not configured or unavailable on this server.")
 
     cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
     _firebase_app = firebase_admin.initialize_app(
@@ -67,6 +73,10 @@ def get_gcs_credentials() -> service_account.Credentials:
     explicit service-account credentials object. We reuse the same service
     account JSON used for firebase_admin initialisation.
     """
+    if not os.path.isfile(settings.FIREBASE_CREDENTIALS_PATH):
+        logger.error("firebase.credentials_missing", path=settings.FIREBASE_CREDENTIALS_PATH)
+        raise ServiceUnavailableError("Firebase storage is not configured or unavailable on this server.")
+
     return service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call]
         settings.FIREBASE_CREDENTIALS_PATH,
         scopes=["https://www.googleapis.com/auth/cloud-platform"],

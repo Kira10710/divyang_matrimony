@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.core.config import settings
 from app.core.exceptions import (
     AppException,
     BadRequestError,
@@ -20,6 +21,7 @@ from app.core.exceptions import (
     NotFoundError,
     PaymentError,
     RateLimitError,
+    ServiceUnavailableError,
     UnauthorizedError,
 )
 from app.core.response import error_response
@@ -41,6 +43,7 @@ _STATUS_MAP: dict[type[AppException], int] = {
     PaymentError: 402,
     RateLimitError: 429,
     UnauthorizedError: 401,
+    ServiceUnavailableError: 503,
 }
 
 
@@ -88,12 +91,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        logger.error(
-            "unhandled_exception",
-            exc_type=type(exc).__name__,
-            exc_message=str(exc),
-            path=request.url.path,
-        )
+        # Database and library errors can embed row values (phone numbers, emails), so the
+        # message is only logged in development. Elsewhere the type, path and request id
+        # (bound by the middleware) are enough to correlate with Sentry or a repro.
+        log_fields: dict = {"exc_type": type(exc).__name__, "path": request.url.path}
+        if settings.ENVIRONMENT == "development":
+            log_fields["exc_message"] = str(exc)
+        logger.error("unhandled_exception", **log_fields)
         return JSONResponse(
             status_code=500,
             content=error_response(

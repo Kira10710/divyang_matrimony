@@ -180,8 +180,11 @@ class ProfileOut(BaseModel):
     """
 
     id: uuid.UUID
-    user_id: uuid.UUID
-    platform_id: str
+    # Internal identifiers are returned only at the PRIVATE tier. Keeping the
+    # fields optional lets lower-tier responses omit their values while using
+    # one response schema for every visibility tier.
+    user_id: uuid.UUID | None = None
+    platform_id: str | None = None
     managed_by: ProfileManagedByEnum
 
     # Identity

@@ -21,6 +21,28 @@ from __future__ import annotations
 
 import os
 
+# ---------------------------------------------------------------------------
+# Database safety guard — imported from the shared module so that conftest,
+# clean_db.py, and any future script all enforce the same rules from a single
+# auditable source of truth.
+# ---------------------------------------------------------------------------
+from app.core.db_guard import DatabaseSafetyError
+from app.core.db_guard import assert_safe_test_db_url as _assert_safe_test_db_url
+
+# CI sets REQUIRE_POSTGRES_TESTS=1 so a missing TEST_DATABASE_URL fails loudly instead of the
+# suite quietly running on in-memory SQLite (which cannot exercise PostgreSQL behaviour).
+if os.environ.get("REQUIRE_POSTGRES_TESTS") == "1" and not os.environ.get("TEST_DATABASE_URL", "").strip():
+    raise RuntimeError("REQUIRE_POSTGRES_TESTS=1 but TEST_DATABASE_URL is not set; refusing to fall back to SQLite.")
+
+if "TEST_DATABASE_URL" in os.environ:
+    _raw_test_url = os.environ["TEST_DATABASE_URL"].strip()
+    try:
+        _assert_safe_test_db_url(_raw_test_url)
+    except DatabaseSafetyError as _exc:
+        raise RuntimeError(str(_exc)) from _exc
+    os.environ["DATABASE_URL"] = _raw_test_url
+
+
 os.environ.setdefault("ENVIRONMENT", "development")
 os.environ.setdefault("PLATFORM_ID", "divyang_matrimony")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test_db_unused")
@@ -43,12 +65,13 @@ import pytest
 import pytest_asyncio
 import sqlalchemy.types as sqltypes
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import ARRAY, INET, JSONB, TSVECTOR
 from sqlalchemy.dialects.sqlite.aiosqlite import SQLiteDialect_aiosqlite
 from sqlalchemy.dialects.sqlite.base import DATETIME as SQLiteDateTime  # noqa: N811
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 # ---------------------------------------------------------------------------
 # SQLite compatibility shims (test-only — production always runs on
@@ -148,19 +171,63 @@ from .fakes import FakeRedis  # noqa: E402
 
 @pytest_asyncio.fixture
 async def db_engine() -> AsyncIterator[AsyncEngine]:
-    """A fresh, isolated in-memory SQLite database per test, schema created
-    from the real ORM models (`app.models`)."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
-        connect_args={"check_same_thread": False},
+    """A fresh, isolated database per test.
+
+    When TEST_DATABASE_URL is set, connects to PostgreSQL with NullPool and
+    performs per-test table truncation against the migrated schema.
+    Otherwise, creates an isolated in-memory SQLite database per test.
+    """
+    is_ci = os.environ.get("CI", "").strip().lower() in ("true", "1", "yes") or bool(
+        os.environ.get("GITHUB_ACTIONS")
     )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    try:
-        yield engine
-    finally:
-        await engine.dispose()
+    test_db_url = os.environ.get("TEST_DATABASE_URL", "").strip()
+    if is_ci and not test_db_url:
+        raise RuntimeError(
+            "CRITICAL CI CONFIGURATION ERROR: CI environment detected (CI=true / GITHUB_ACTIONS), "
+            "but TEST_DATABASE_URL is missing or empty. CI tests must run against "
+            "the dedicated PostgreSQL service, not silently fall back to in-memory SQLite."
+        )
+
+    if test_db_url:
+        try:
+            _assert_safe_test_db_url(test_db_url)
+        except DatabaseSafetyError as exc:
+            raise RuntimeError(str(exc)) from exc
+        engine = create_async_engine(
+            test_db_url,
+            poolclass=NullPool,
+        )
+        if engine.dialect.name != "postgresql":
+            await engine.dispose()
+            raise RuntimeError(
+                f"CRITICAL SAFETY VIOLATION: Expected PostgreSQL test database, "
+                f"got '{engine.dialect.name}'. Refusing to execute PostgreSQL truncation."
+            )
+        truncate_sql = text(
+            "TRUNCATE TABLE sensitive_data_access_logs, profile_photos, "
+            "partner_preferences, sensitive_profile_data, profiles, "
+            "login_history, active_sessions, users RESTART IDENTITY CASCADE;"
+        )
+        async with engine.begin() as conn:
+            await conn.execute(truncate_sql)
+        try:
+            yield engine
+        finally:
+            async with engine.begin() as conn:
+                await conn.execute(truncate_sql)
+            await engine.dispose()
+    else:
+        engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            poolclass=StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        try:
+            yield engine
+        finally:
+            await engine.dispose()
 
 
 @pytest.fixture
@@ -266,7 +333,7 @@ def app_client(
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_otp_service] = _override_get_otp_service
 
-    with TestClient(app) as client:
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
         yield client
 
     app.dependency_overrides.clear()

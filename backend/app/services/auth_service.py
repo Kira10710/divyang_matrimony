@@ -53,6 +53,11 @@ from app.services.otp_service import IOtpService
 
 logger = structlog.get_logger(__name__)
 
+# Precomputed once at process start-up to maintain constant-time responses for
+# unknown-email admin login attempts. Re-hashing on every request would expose
+# a CPU-exhaustion (DoS) vector when Argon2 parameters are high.
+_ADMIN_DUMMY_HASH: str = hash_password("admin_timing_sentinel_do_not_use")
+
 
 def _build_token_pair(user: User) -> tuple[TokenPair, uuid.UUID]:
     """
@@ -99,7 +104,13 @@ class AuthService:
     # OTP flow
     # -----------------------------------------------------------------------
 
-    async def send_otp(self, phone: str, platform_id: str) -> None:
+    async def send_otp(
+        self,
+        phone: str,
+        platform_id: str,
+        *,
+        ip_address: str | None = None,
+    ) -> None:
         """
         Step 1 of phone login: generate and send an OTP.
 
@@ -107,12 +118,19 @@ class AuthService:
         Rate limit and lockout are enforced inside otp_service.send_otp().
         """
         # Check if the account exists and is banned/inactive
+        # A banned account gets the same success response as everyone else but no OTP is
+        # sent, so this endpoint cannot be used to find out which numbers are registered
+        # or banned (Architecture §19.1: no account enumeration).
         user = await self._user_repo.get_by_phone(phone, platform_id)
         if user and user.is_banned:
-            raise AccountBannedError()
+            logger.info("otp_suppressed_banned_account", platform_id=platform_id)
+            return
 
         # Delegate rate-limiting and delivery to OTP service
-        await self._otp_service.send_otp(phone, platform_id)
+        if ip_address is not None:
+            await self._otp_service.send_otp(phone, platform_id, ip_address=ip_address)
+        else:
+            await self._otp_service.send_otp(phone, platform_id)
         logger.info("otp_sent", phone_suffix=phone[-4:], platform_id=platform_id)
 
     async def verify_otp(
@@ -144,6 +162,10 @@ class AuthService:
         if not is_valid:
             # Log failure if user exists
             user = await self._user_repo.get_by_phone(phone, platform_id)
+            # The failure counter (and therefore the lockout) is kept for every phone,
+            # registered or not, so a lockout response does not reveal that an account exists.
+            if hasattr(self._otp_service, "record_failed_attempt"):
+                await self._otp_service.record_failed_attempt(phone, platform_id)  # type: ignore[attr-defined]
             if user:
                 await self._session_repo.log_event(
                     user_id=user.id,
@@ -155,9 +177,6 @@ class AuthService:
                     is_suspicious=False,
                     platform_id=platform_id,
                 )
-                # Increment account-level failure counter
-                if hasattr(self._otp_service, "record_failed_attempt"):
-                    await self._otp_service.record_failed_attempt(phone, platform_id)  # type: ignore[attr-defined]
             raise OtpError()
 
         # OTP is valid — invalidate it immediately (one-time use)
@@ -259,6 +278,9 @@ class AuthService:
         Separate from OTP flow — admins never use OTP.
         Same session + login_history infrastructure applies.
         """
+        if ip_address:
+            await self._otp_service.check_admin_ip_rate_limit(ip_address, platform_id)
+
         user = await self._user_repo.get_by_email(email, platform_id)
 
         async def _fail(user_id: uuid.UUID | None = None) -> None:
@@ -277,12 +299,17 @@ class AuthService:
             raise UnauthorizedError("Invalid email or password")
 
         if user is None or not user.is_admin:
-            # Always verify a dummy hash to prevent timing attacks
-            verify_password(password, hash_password("dummy_constant_cost"))
+            # Use the precomputed dummy hash — avoids computing Argon2 on every
+            # bad-email request (no per-request hashing cost for attackers).
+            verify_password(password, _ADMIN_DUMMY_HASH)
             await _fail()
 
         assert user is not None  # narrowing for type checker
 
+        # Verify password directly.
+        # Legitimate administrators can authenticate with correct password,
+        # preventing unauthenticated callers from globally locking out administrators.
+        # Failed password raises generic UnauthorizedError (no enumeration of admin status).
         if not verify_password(password, user.password_hash or ""):
             await _fail(user.id)
 
@@ -384,8 +411,10 @@ class AuthService:
         if user is None or user.is_banned or not user.is_active:
             raise UnauthorizedError()
 
-        # Revoke old session and issue new one
-        await self._session_repo.revoke_session(session)
+        # Revoke the old session atomically: of two concurrent refreshes with the same
+        # token only one can win; the loser is rejected like any replayed token.
+        if not await self._session_repo.revoke_if_active(session):
+            raise InvalidTokenError("Session has been revoked")
 
         new_token_pair, new_jti = _build_token_pair(user)
         session_expires_at = now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
@@ -438,25 +467,36 @@ class AuthService:
             raise InvalidTokenError()
 
         jti = payload.get("jti")
+        token_sub = payload.get("sub")
         if not jti:
             raise InvalidTokenError()
 
+        # Token subject must match authenticated caller
+        if not token_sub or token_sub != str(user_id):
+            raise UnauthorizedError("Session does not belong to this user")
+
         session = await self._session_repo.get_session_by_jti(jti)
-        if session and not session.is_revoked:
+
+        # BOLA guard: the session's owner must match the authenticated caller.
+        if session is not None and session.user_id != user_id:
+            raise UnauthorizedError("Session does not belong to this user")
+
+        # Only revoke and log if session exists and is active.
+        # Absent or already-revoked sessions do not create misleading audit events
+        # or disclose session existence.
+        if session is not None and not session.is_revoked:
             await self._session_repo.revoke_session(session)
-
-        await self._session_repo.log_event(
-            user_id=user_id,
-            event_type=LoginEventTypeEnum.LOGOUT,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            device_info=session.device_info if session else None,
-            refresh_token_jti=jti,
-            is_suspicious=False,
-            platform_id=platform_id,
-        )
-
-        logger.info("user_logged_out", user_id=str(user_id))
+            await self._session_repo.log_event(
+                user_id=user_id,
+                event_type=LoginEventTypeEnum.LOGOUT,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                device_info=session.device_info,
+                refresh_token_jti=jti,
+                is_suspicious=False,
+                platform_id=platform_id,
+            )
+            logger.info("user_logged_out", user_id=str(user_id))
 
     async def logout_all(
         self,

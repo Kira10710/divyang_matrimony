@@ -142,7 +142,7 @@ async def update_own_profile(
 # ---------------------------------------------------------------------------
 
 @router.get(
-    "/{profile_id}",
+    "/{profile_id:uuid}",
     status_code=status.HTTP_200_OK,
     summary="Get profile by ID",
     description=(

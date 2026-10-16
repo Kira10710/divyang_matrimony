@@ -11,7 +11,7 @@ import json
 import pytest
 
 from app.core.config import settings
-from app.core.exceptions import OtpRateLimitError
+from app.core.exceptions import OtpRateLimitError, ServiceUnavailableError
 from app.services.otp_service import ConsoleOtpService, RedisOtpService
 
 from ..fakes import FakeRedis
@@ -84,6 +84,105 @@ class TestRedisOtpServiceSendOtp:
 
         assert await otp_service.verify_otp(PHONE, first_code, PLATFORM) is False
 
+    async def test_enforces_the_per_ip_rate_limit(
+        self, otp_service: RedisOtpService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "OTP_IP_RATE_LIMIT_PER_HOUR", 2)
+        ip = "192.168.1.100"
+
+        await otp_service.send_otp(PHONE, PLATFORM, ip_address=ip)
+        await otp_service.send_otp(OTHER_PHONE, PLATFORM, ip_address=ip)
+
+        with pytest.raises(OtpRateLimitError, match="Too many OTP requests from this network"):
+            await otp_service.send_otp("+919999999999", PLATFORM, ip_address=ip)
+
+    async def test_enforces_the_global_rate_limit(
+        self, otp_service: RedisOtpService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "OTP_GLOBAL_RATE_LIMIT_PER_MINUTE", 2)
+
+        await otp_service.send_otp(PHONE, PLATFORM)
+        await otp_service.send_otp(OTHER_PHONE, PLATFORM)
+
+        with pytest.raises(OtpRateLimitError, match="System OTP request limit reached"):
+            await otp_service.send_otp("+919999999999", PLATFORM)
+
+    async def test_non_development_environment_fails_closed_without_sms_provider(
+        self, otp_service: RedisOtpService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+
+        with pytest.raises(ServiceUnavailableError, match="SMS delivery provider is not configured"):
+            await otp_service.send_otp(PHONE, PLATFORM)
+
+    async def test_concurrent_otp_sends_respect_configured_quota(
+        self, otp_service: RedisOtpService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        monkeypatch.setattr(settings, "OTP_RATE_LIMIT_PER_HOUR", 3)
+
+        results = await asyncio.gather(
+            *[otp_service.send_otp(PHONE, PLATFORM) for _ in range(6)],
+            return_exceptions=True,
+        )
+
+        successes = [r for r in results if not isinstance(r, Exception)]
+        rate_limits = [r for r in results if isinstance(r, OtpRateLimitError)]
+
+        assert len(successes) == 3
+        assert len(rate_limits) == 3
+
+    async def test_rate_limit_counter_sets_ttl_only_on_first_increment(
+        self, otp_service: RedisOtpService, fake_redis: FakeRedis
+    ) -> None:
+        import time
+        await otp_service.send_otp(PHONE, PLATFORM)
+        ttl1 = await fake_redis.ttl(f"otp_rate:{PLATFORM}:{PHONE}")
+        assert 3590 <= ttl1 <= 3600
+
+        # Advance expiration simulating elapsed time
+        key = f"otp_rate:{PLATFORM}:{PHONE}"
+        fake_redis._expires_at[key] = time.monotonic() + 1800
+
+        # Subsequent increment in same window must preserve existing TTL
+        await otp_service.send_otp(PHONE, PLATFORM)
+        ttl2 = await fake_redis.ttl(key)
+        assert 1790 <= ttl2 <= 1800
+
+    async def test_redis_failure_raises_service_unavailable(
+        self, otp_service: RedisOtpService, fake_redis: FakeRedis
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        import redis.asyncio as aioredis
+        fake_redis.eval = AsyncMock(side_effect=aioredis.RedisError("Connection refused"))
+
+        with pytest.raises(ServiceUnavailableError, match="Authentication service is temporarily unavailable"):
+            await otp_service.send_otp(PHONE, PLATFORM)
+
+    async def test_failed_sms_dispatch_rolls_back_rate_limit_and_cleans_stale_otp(
+        self, otp_service: RedisOtpService, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock
+        monkeypatch.setattr(settings, "OTP_RATE_LIMIT_PER_HOUR", 1)
+
+        otp_service._send_sms = AsyncMock(side_effect=RuntimeError("SMS provider down"))
+
+        with pytest.raises(RuntimeError, match="SMS provider down"):
+            await otp_service.send_otp(PHONE, PLATFORM)
+
+        # Quota rolled back
+        rate_val = await fake_redis.get(f"otp_rate:{PLATFORM}:{PHONE}")
+        assert rate_val is None or int(rate_val) == 0
+
+        # Un-dispatched OTP deleted
+        assert await fake_redis.get(f"otp:{PLATFORM}:{PHONE}") is None
+
+        # Next send is permitted
+        otp_service._send_sms = AsyncMock(return_value=None)
+        await otp_service.send_otp(PHONE, PLATFORM)
+        assert await fake_redis.get(f"otp:{PLATFORM}:{PHONE}") is not None
+
 
 class TestRedisOtpServiceVerifyOtp:
     async def test_correct_code_verifies(
@@ -144,6 +243,47 @@ class TestRedisOtpServiceVerifyOtp:
         await otp_service.invalidate_otp(PHONE, PLATFORM)
 
         assert await fake_redis.get(f"otp:{PLATFORM}:{PHONE}") is None
+
+    async def test_concurrent_otp_verification_failures_atomic_lockout(
+        self, otp_service: RedisOtpService, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        monkeypatch.setattr(settings, "OTP_MAX_ATTEMPTS", 3)
+        await otp_service.send_otp(PHONE, PLATFORM)
+        code = json.loads(await fake_redis.get(f"otp:{PLATFORM}:{PHONE}"))["code"]
+        wrong = _flip(code)
+
+        results = await asyncio.gather(
+            *[otp_service.verify_otp(PHONE, wrong, PLATFORM) for _ in range(5)]
+        )
+
+        assert all(r is False for r in results)
+        assert await fake_redis.get(f"otp:{PLATFORM}:{PHONE}") is None
+        assert await otp_service.verify_otp(PHONE, code, PLATFORM) is False
+
+    async def test_verify_otp_redis_failure_raises_service_unavailable(
+        self, otp_service: RedisOtpService, fake_redis: FakeRedis
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        import redis.asyncio as aioredis
+        fake_redis.eval = AsyncMock(side_effect=aioredis.RedisError("Connection reset"))
+
+        with pytest.raises(ServiceUnavailableError, match="Authentication service is temporarily unavailable"):
+            await otp_service.verify_otp(PHONE, "123456", PLATFORM)
+
+    async def test_admin_ip_rate_limit_enforced_and_tracks_fixed_window(
+        self, otp_service: RedisOtpService, fake_redis: FakeRedis, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.core.exceptions import RateLimitError
+        monkeypatch.setattr(settings, "AUTH_ADMIN_IP_RATE_LIMIT", 2)
+        ip = "192.0.2.1"
+
+        await otp_service.check_admin_ip_rate_limit(ip, PLATFORM)
+        await otp_service.check_admin_ip_rate_limit(ip, PLATFORM)
+
+        with pytest.raises(RateLimitError, match="Too many admin login attempts"):
+            await otp_service.check_admin_ip_rate_limit(ip, PLATFORM)
 
 
 class TestRedisOtpServiceAccountLockout:

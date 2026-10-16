@@ -4,14 +4,21 @@ Integration tests for Admin Photo Moderation (Phase 4.3).
 Ensures that only admins can access moderation queue, approve, and reject photos.
 """
 import asyncio
+from datetime import date
+from unittest.mock import MagicMock
 
 import pytest
+from fastapi import Depends
 from fastapi.testclient import TestClient
 
+from app.core.dependencies import get_photo_repository, get_photo_service
 from app.core.security import create_access_token
-from app.models.enums import ModerationStatusEnum
+from app.models.enums import GenderEnum, MaritalStatusEnum, ModerationStatusEnum
+from app.models.profile import Profile
 from app.models.profile_photo import ProfilePhoto
 from app.models.user import AdminRoleEnum
+from app.repositories.photo_repository import PhotoRepository
+from app.services.photo_service import PhotoService
 
 
 @pytest.fixture
@@ -34,14 +41,25 @@ def user_auth_headers(make_user) -> dict:
 def pending_photo(db_session_factory, make_user) -> ProfilePhoto:
     async def _create():
         user = await make_user()
-        photo = ProfilePhoto(
-            profile_id=user.id,
-            storage_path="test/original.jpg",
-            medium_path="test/medium.jpg",
-            thumbnail_path="test/thumbnail.jpg",
-            moderation_status=ModerationStatusEnum.PENDING,
+        profile = Profile(
+            user_id=user.id,
+            first_name="Test",
+            last_name="User",
+            gender=GenderEnum.MALE,
+            date_of_birth=date(1995, 1, 1),
+            marital_status=MaritalStatusEnum.NEVER_MARRIED,
+            country="India",
         )
         async with db_session_factory() as db:
+            db.add(profile)
+            await db.flush()
+            photo = ProfilePhoto(
+                profile_id=profile.id,
+                storage_path="test/original.jpg",
+                medium_path="test/medium.jpg",
+                thumbnail_path="test/thumbnail.jpg",
+                moderation_status=ModerationStatusEnum.PENDING,
+            )
             db.add(photo)
             await db.commit()
             await db.refresh(photo)
@@ -50,25 +68,21 @@ def pending_photo(db_session_factory, make_user) -> ProfilePhoto:
     return asyncio.run(_create())
 
 
-from unittest.mock import MagicMock
-
-from app.core.dependencies import get_photo_service
-from app.repositories.photo_repository import PhotoRepository
-from app.services.photo_service import PhotoService
-
-
 @pytest.fixture
-def mock_photo_service(db_session):
-    repo = PhotoRepository(db_session)
+def mock_photo_service():
     mock_blob = MagicMock()
     mock_blob.generate_signed_url.return_value = "https://signed.example/x"
     mock_bucket = MagicMock()
     mock_bucket.blob.return_value = mock_blob
-    return PhotoService(
-        photo_repo=repo,
-        bucket_factory=lambda: mock_bucket,
-        gcs_credentials_factory=lambda: MagicMock(),
-    )
+
+    def _factory(repo: PhotoRepository = Depends(get_photo_repository)):  # noqa: B008 - FastAPI dependency injection
+        return PhotoService(
+            photo_repo=repo,
+            bucket_factory=lambda: mock_bucket,
+            gcs_credentials_factory=lambda: MagicMock(),
+        )
+
+    return _factory
 
 
 def test_admin_get_moderation_queue(
@@ -77,7 +91,7 @@ def test_admin_get_moderation_queue(
     pending_photo: ProfilePhoto,
     mock_photo_service: PhotoService,
 ):
-    app_client.app.dependency_overrides[get_photo_service] = lambda: mock_photo_service
+    app_client.app.dependency_overrides[get_photo_service] = mock_photo_service
     """Admin can get pending photos."""
     try:
         response = app_client.get(
@@ -103,7 +117,7 @@ def test_user_cannot_access_moderation_queue(
     user_auth_headers: dict,
     mock_photo_service: PhotoService,
 ):
-    app_client.app.dependency_overrides[get_photo_service] = lambda: mock_photo_service
+    app_client.app.dependency_overrides[get_photo_service] = mock_photo_service
     """Regular users get 403 when accessing admin routes."""
     try:
         response = app_client.get(
@@ -122,7 +136,7 @@ def test_admin_approve_photo(
     db_session_factory,
     mock_photo_service: PhotoService,
 ):
-    app_client.app.dependency_overrides[get_photo_service] = lambda: mock_photo_service
+    app_client.app.dependency_overrides[get_photo_service] = mock_photo_service
     """Admin can approve a photo."""
     try:
         response = app_client.put(
@@ -150,7 +164,7 @@ def test_admin_reject_photo(
     db_session_factory,
     mock_photo_service: PhotoService,
 ):
-    app_client.app.dependency_overrides[get_photo_service] = lambda: mock_photo_service
+    app_client.app.dependency_overrides[get_photo_service] = mock_photo_service
     """Admin can reject a photo with a reason."""
     try:
         reason = "Inappropriate content"

@@ -10,10 +10,11 @@ import uuid
 from abc import ABC, abstractmethod
 
 import structlog
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import ModerationStatusEnum
+from app.models.profile import Profile
 from app.models.profile_photo import ProfilePhoto
 
 logger = structlog.get_logger(__name__)
@@ -39,7 +40,9 @@ class IPhotoRepository(ABC):
     async def count_for_profile(self, profile_id: uuid.UUID) -> int: ...
 
     @abstractmethod
-    async def get_pending_photos(self, limit: int = 50, offset: int = 0) -> list[ProfilePhoto]: ...
+    async def get_pending_photos(
+        self, limit: int = 50, offset: int = 0, *, platform_id: str | None = None
+    ) -> list[ProfilePhoto]: ...
 
     @abstractmethod
     async def get_primary(self, profile_id: uuid.UUID) -> ProfilePhoto | None: ...
@@ -53,6 +56,8 @@ class IPhotoRepository(ABC):
         photo_id: uuid.UUID,
         status: ModerationStatusEnum,
         rejection_reason: str | None = None,
+        *,
+        platform_id: str | None = None,
     ) -> ProfilePhoto | None: ...
 
     @abstractmethod
@@ -62,6 +67,9 @@ class IPhotoRepository(ABC):
 
     @abstractmethod
     async def delete(self, photo_id: uuid.UUID) -> bool: ...
+
+    @abstractmethod
+    async def promote_next_primary(self, profile_id: uuid.UUID) -> None: ...
 
     @abstractmethod
     async def hard_delete_all_for_profile(self, profile_id: uuid.UUID) -> int: ...
@@ -116,11 +124,21 @@ class PhotoRepository(IPhotoRepository):
         )
         return result.scalar_one()
 
-    async def get_pending_photos(self, limit: int = 50, offset: int = 0) -> list[ProfilePhoto]:
-        """Get photos awaiting moderation."""
+    async def get_pending_photos(
+        self, limit: int = 50, offset: int = 0, *, platform_id: str | None = None
+    ) -> list[ProfilePhoto]:
+        """Get photos awaiting moderation. platform_id=None means every platform."""
+        stmt = select(ProfilePhoto).where(
+            ProfilePhoto.moderation_status == ModerationStatusEnum.PENDING
+        )
+        if platform_id is not None:
+            stmt = stmt.where(
+                ProfilePhoto.profile_id.in_(
+                    select(Profile.id).where(Profile.platform_id == platform_id)
+                )
+            )
         stmt = (
-            select(ProfilePhoto)
-            .where(ProfilePhoto.moderation_status == ModerationStatusEnum.PENDING)
+            stmt
             .order_by(ProfilePhoto.created_at.asc())
             .limit(limit)
             .offset(offset)
@@ -149,17 +167,28 @@ class PhotoRepository(IPhotoRepository):
         photo_id: uuid.UUID,
         status: ModerationStatusEnum,
         rejection_reason: str | None = None,
+        *,
+        platform_id: str | None = None,
     ) -> ProfilePhoto | None:
-        """Set moderation_status (and optionally rejection_reason). Admin only."""
-        stmt = (
-            update(ProfilePhoto)
-            .where(ProfilePhoto.id == photo_id)
-            .values(
-                moderation_status=status,
-                rejection_reason=rejection_reason,
+        """Set moderation_status (and optionally rejection_reason). Admin only.
+
+        When platform_id is given the update only matches photos whose profile
+        belongs to that platform (scope check and write are one statement).
+        """
+        stmt = update(ProfilePhoto).where(ProfilePhoto.id == photo_id)
+        if platform_id is not None:
+            stmt = stmt.where(
+                ProfilePhoto.profile_id.in_(
+                    select(Profile.id).where(Profile.platform_id == platform_id)
+                )
             )
-            .returning(ProfilePhoto)
-        )
+        values: dict = {
+            "moderation_status": status,
+            "rejection_reason": rejection_reason,
+        }
+        if status == ModerationStatusEnum.REJECTED:
+            values["is_primary"] = False  # a rejected photo is never the primary
+        stmt = stmt.values(**values).returning(ProfilePhoto)
         result = await self._db.execute(stmt)
         await self._db.flush()
         return result.scalar_one_or_none()
@@ -196,6 +225,30 @@ class PhotoRepository(IPhotoRepository):
         )
         await self._db.flush()
         return result.rowcount > 0
+
+    async def promote_next_primary(self, profile_id: uuid.UUID) -> None:
+        """If the profile has no primary photo, promote its first APPROVED one."""
+        existing = await self._db.execute(
+            select(func.count())
+            .select_from(ProfilePhoto)
+            .where(ProfilePhoto.profile_id == profile_id)
+            .where(ProfilePhoto.is_primary.is_(True))
+            .where(ProfilePhoto.moderation_status != ModerationStatusEnum.REJECTED)
+        )
+        if existing.scalar_one() > 0:
+            return
+        candidate = (
+            select(ProfilePhoto.id)
+            .where(ProfilePhoto.profile_id == profile_id)
+            .where(ProfilePhoto.moderation_status == ModerationStatusEnum.APPROVED)
+            .order_by(ProfilePhoto.display_order.asc(), ProfilePhoto.created_at.asc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        await self._db.execute(
+            update(ProfilePhoto).where(ProfilePhoto.id == candidate).values(is_primary=True)
+        )
+        await self._db.flush()
 
     async def hard_delete_all_for_profile(self, profile_id: uuid.UUID) -> int:
         """Hard delete ALL photo rows for a profile (account deletion flow)."""
